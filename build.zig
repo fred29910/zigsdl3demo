@@ -49,6 +49,15 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // M1: SDL Platform 模块（window / event / input）。
+    const platform_sdl_mod = b.addModule("engine.platform.sdl", .{
+        .root_source_file = b.path("src/engine/platform/sdl.zig"),
+        .target = target,
+        .imports = &.{
+            .{ .name = "sdl3", .module = sdl3_dep.module("sdl3") },
+        },
+    });
+
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
     // to the module defined above, it's sometimes preferable to split business
@@ -88,6 +97,7 @@ pub fn build(b: *std.Build) void {
                 // importing modules from different packages).
                 .{ .name = "zigsdl3demo", .module = mod },
                 .{ .name = "sdl3", .module = sdl3_dep.module("sdl3") },
+                .{ .name = "engine.platform.sdl", .module = platform_sdl_mod },
             },
         }),
     });
@@ -148,6 +158,13 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+
+    // M1: 验证 SDL Platform 模块可编译并运行其单元测试。
+    const platform_tests = b.addTest(.{
+        .root_module = platform_sdl_mod,
+    });
+    const run_platform_tests = b.addRunArtifact(platform_tests);
+    test_step.dependOn(&run_platform_tests.step);
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
