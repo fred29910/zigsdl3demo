@@ -30,17 +30,15 @@ pub const MouseDelta = struct {
     y: f32 = 0,
 };
 
-/// 输入状态。
+/// 每帧按 beginFrame → handleEvent → 查询的顺序使用。
 pub const InputState = struct {
     /// 当前帧各动作是否按下。
     down: [action_count]bool = @splat(false),
-    /// 上一帧各动作是否按下（用于边沿检测）。
-    prev: [action_count]bool = @splat(false),
+    pressed_this_frame: [action_count]bool = @splat(false),
+    released_this_frame: [action_count]bool = @splat(false),
     /// 当前帧累积的鼠标增量。
     mouse_dx: f32 = 0,
     mouse_dy: f32 = 0,
-    /// 鼠标是否被捕获（相对模式）。
-    captured: bool = false,
     /// 关联窗口（用于捕获/释放鼠标）。
     window: ?Window = null,
 
@@ -49,153 +47,109 @@ pub const InputState = struct {
     }
 
     pub fn initWithWindow(window: Window) InputState {
-        var state = InputState{};
-        state.window = window;
-        return state;
+        return .{ .window = window };
     }
 
-    pub fn setWindow(self: *InputState, window: Window) void {
-        self.window = window;
-    }
-
-    /// 开始新一帧：保存上一帧状态并清空鼠标增量。
+    /// 清空本帧边沿和鼠标增量，保留当前按住的动作。
     pub fn beginFrame(self: *InputState) void {
-        self.prev = self.down;
+        self.pressed_this_frame = @splat(false);
+        self.released_this_frame = @splat(false);
         self.mouse_dx = 0;
         self.mouse_dy = 0;
     }
 
-    /// `beginFrame` 的别名。
-    pub fn resetFrame(self: *InputState) void {
-        self.beginFrame();
+    fn acceptsWindow(self: *const InputState, id: window_mod.WindowId) bool {
+        const window = self.window orelse return true;
+        return window.id() == id;
+    }
+
+    fn setDown(self: *InputState, action: Action, down: bool) void {
+        const i = @backingInt(action);
+        if (self.down[i] == down) return;
+        self.down[i] = down;
+        if (down) self.pressed_this_frame[i] = true else self.released_this_frame[i] = true;
+    }
+
+    /// 失焦时复位按住的动作，同时保留本帧已发生的边沿。
+    pub fn releaseAll(self: *InputState) void {
+        for (&self.down, &self.released_this_frame) |*down, *released_this_frame| {
+            if (down.*) released_this_frame.* = true;
+            down.* = false;
+        }
+        self.mouse_dx = 0;
+        self.mouse_dy = 0;
     }
 
     /// 处理单个 SDL 事件，更新当前状态与鼠标增量。
     pub fn handleEvent(self: *InputState, event: sdl.Event) void {
         switch (event) {
             .key_down => |e| {
-                if (keyToAction(e.scancode)) |action| {
-                    self.down[@intFromEnum(action)] = true;
-                }
+                if (!self.acceptsWindow(e.window_id) or e.repeat) return;
+                if (keyToAction(e.scancode)) |action| self.setDown(action, true);
             },
             .key_up => |e| {
-                if (keyToAction(e.scancode)) |action| {
-                    self.down[@intFromEnum(action)] = false;
-                }
+                if (!self.acceptsWindow(e.window_id)) return;
+                if (keyToAction(e.scancode)) |action| self.setDown(action, false);
             },
             .mouse_motion => |e| {
+                if (!self.acceptsWindow(e.window_id)) return;
                 self.mouse_dx += e.xrel;
                 self.mouse_dy += e.yrel;
             },
             .mouse_button_down => |e| {
-                if (mouseButtonToAction(e.button)) |action| {
-                    self.down[@intFromEnum(action)] = true;
-                }
+                if (self.acceptsWindow(e.window_id) and e.button == .left) self.setDown(.fire, true);
             },
             .mouse_button_up => |e| {
-                if (mouseButtonToAction(e.button)) |action| {
-                    self.down[@intFromEnum(action)] = false;
-                }
+                if (self.acceptsWindow(e.window_id) and e.button == .left) self.setDown(.fire, false);
             },
             else => {},
         }
     }
 
-    /// 轮询 SDL 当前状态，刷新本帧输入（适合每帧调用）。
-    pub fn update(self: *InputState) void {
-        self.beginFrame();
-
-        const ks = sdl.keyboard.state();
-        inline for (0..action_count) |i| {
-            const action: Action = @enumFromInt(i);
-            if (action == .fire) continue;
-            const sc = scancodeFor(action);
-            self.down[i] = ks.isDown(sc);
-        }
-
-        const ms = sdl.mouse.relativeState();
-        self.mouse_dx = ms.x;
-        self.mouse_dy = ms.y;
-
-        const button_state = sdl.mouse.state().buttons;
-        self.down[@intFromEnum(Action.fire)] = button_state.isDown(.left);
-    }
-
     pub fn isDown(self: *const InputState, action: Action) bool {
-        return self.down[@intFromEnum(action)];
+        return self.down[@backingInt(action)];
     }
 
     pub fn pressed(self: *const InputState, action: Action) bool {
-        const idx = @intFromEnum(action);
-        return self.down[idx] and !self.prev[idx];
+        return self.pressed_this_frame[@backingInt(action)];
     }
 
     pub fn released(self: *const InputState, action: Action) bool {
-        const idx = @intFromEnum(action);
-        return !self.down[idx] and self.prev[idx];
+        return self.released_this_frame[@backingInt(action)];
     }
 
     pub fn mouseDelta(self: *const InputState) MouseDelta {
         return .{ .x = self.mouse_dx, .y = self.mouse_dy };
     }
 
-    /// 设置鼠标捕获状态；若已关联窗口，则同步到 SDL 相对模式。
-    pub fn setMouseCaptured(self: *InputState, captured: bool) void {
-        self.captured = captured;
-        if (self.window) |window| {
-            window.setRelativeMouseMode(captured) catch {};
-            if (captured) {
-                sdl.mouse.hideCursor() catch {};
-            } else {
-                sdl.mouse.showCursor() catch {};
-            }
-        }
-    }
-
-    /// 显式指定窗口的鼠标捕获设置。
-    pub fn setMouseCapturedWindow(self: *InputState, window: Window, captured: bool) !void {
-        self.window = window;
-        self.captured = captured;
+    /// SDL 相对模式负责捕获和光标可见性。
+    pub fn setMouseCaptured(self: *InputState, captured: bool) !void {
+        const window = self.window orelse return error.NoWindow;
         try window.setRelativeMouseMode(captured);
-        if (captured) {
-            try sdl.mouse.hideCursor();
-        } else {
-            try sdl.mouse.showCursor();
-        }
+        self.mouse_dx = 0;
+        self.mouse_dy = 0;
     }
 
     /// 当前是否处于鼠标捕获状态。
     pub fn mouseCaptured(self: *const InputState) bool {
-        return self.captured;
+        const window = self.window orelse return false;
+        return window.relativeMouseMode();
     }
 };
 
-fn scancodeFor(action: Action) sdl.Scancode {
-    return switch (action) {
-        .move_forward => .w,
-        .move_back => .s,
-        .move_left => .a,
-        .move_right => .d,
-        .jump => .space,
-        .sprint => .lshift,
-        .crouch => .lctrl,
-        .reload => .r,
-        .interact => .e,
-        .fire => .unknown,
-    };
-}
-
 fn keyToAction(scancode: sdl.Scancode) ?Action {
-    inline for (0..action_count) |i| {
-        const action: Action = @enumFromInt(i);
-        if (action == .fire) continue;
-        if (scancodeFor(action) == scancode) return action;
-    }
-    return null;
-}
-
-fn mouseButtonToAction(button: sdl.mouse.Button) ?Action {
-    return if (button == .left) Action.fire else null;
+    return switch (scancode) {
+        .w => .move_forward,
+        .s => .move_back,
+        .a => .move_left,
+        .d => .move_right,
+        .space => .jump,
+        .lshift => .sprint,
+        .lctrl => .crouch,
+        .r => .reload,
+        .e => .interact,
+        else => null,
+    };
 }
 
 test "action enum count" {
@@ -213,34 +167,68 @@ test "input state defaults" {
     try std.testing.expect(!state.mouseCaptured());
 }
 
-test "input edge detection" {
-    var state = InputState.init();
-    state.down[@intFromEnum(Action.jump)] = true;
-    state.prev[@intFromEnum(Action.jump)] = false;
-    try std.testing.expect(state.pressed(.jump));
-    try std.testing.expect(!state.released(.jump));
-
-    state.prev[@intFromEnum(Action.jump)] = true;
-    state.down[@intFromEnum(Action.jump)] = false;
-    try std.testing.expect(state.released(.jump));
-}
-
-test "input handleEvent" {
-    var state = InputState.init();
-    const key_event: sdl.Event = .{ .key_down = .{
+fn testKey(down: bool, repeat: bool) sdl.Event {
+    const key: @FieldType(sdl.Event, "key_down") = .{
         .timestamp = 0,
         .window_id = 0,
         .which = 0,
         .scancode = .w,
-        .key = .escape,
+        .key = .w,
         .mod = .{},
         .raw_code = 0,
-        .down = true,
-        .repeat = false,
-    } };
-    state.handleEvent(key_event);
-    try std.testing.expect(state.isDown(.move_forward));
+        .down = down,
+        .repeat = repeat,
+    };
+    return if (down) .{ .key_down = key } else .{ .key_up = key };
+}
 
+test "same-frame tap keeps both input edges" {
+    var state = InputState.init();
+    state.beginFrame();
+    state.handleEvent(testKey(true, false));
+    state.handleEvent(testKey(false, false));
+    try std.testing.expect(!state.isDown(.move_forward));
+    try std.testing.expect(state.pressed(.move_forward));
+    try std.testing.expect(state.released(.move_forward));
+    state.beginFrame();
+    try std.testing.expect(!state.pressed(.move_forward));
+    try std.testing.expect(!state.released(.move_forward));
+}
+
+test "pressed keys persist across frames, and repeats do not rearm on focus loss" {
+    var state = InputState.init();
+    state.handleEvent(testKey(true, false));
+    state.beginFrame();
+    try std.testing.expect(state.isDown(.move_forward));
+    try std.testing.expect(!state.pressed(.move_forward));
+    state.releaseAll();
+    state.handleEvent(testKey(true, true));
+    try std.testing.expect(!state.isDown(.move_forward));
+    try std.testing.expect(state.released(.move_forward));
+}
+
+test "a fast left click maps to both fire edges" {
+    var state = InputState.init();
+    var button: sdl.events.MouseButton = .{
+        .timestamp = 0,
+        .window_id = 0,
+        .which = 0,
+        .button = .left,
+        .down = true,
+        .clicks = 1,
+        .x = 0,
+        .y = 0,
+    };
+    state.handleEvent(.{ .mouse_button_down = button });
+    button.down = false;
+    state.handleEvent(.{ .mouse_button_up = button });
+    try std.testing.expect(state.pressed(.fire));
+    try std.testing.expect(state.released(.fire));
+    try std.testing.expect(!state.isDown(.fire));
+}
+
+test "mouse motion accumulates within a frame" {
+    var state = InputState.init();
     const motion_event: sdl.Event = .{ .mouse_motion = .{
         .timestamp = 0,
         .window_id = 0,
@@ -252,10 +240,16 @@ test "input handleEvent" {
         .yrel = -2,
     } };
     state.handleEvent(motion_event);
+    state.handleEvent(motion_event);
     const d = state.mouseDelta();
-    try std.testing.expectEqual(@as(f32, 3), d.x);
-    try std.testing.expectEqual(@as(f32, -2), d.y);
+    try std.testing.expectEqual(@as(f32, 6), d.x);
+    try std.testing.expectEqual(@as(f32, -4), d.y);
+    state.beginFrame();
+    try std.testing.expectEqual(MouseDelta{}, state.mouseDelta());
+}
 
-    state.setMouseCaptured(false);
+test "capture failure without a window leaves capture disabled" {
+    var state = InputState.init();
+    try std.testing.expectError(error.NoWindow, state.setMouseCaptured(true));
     try std.testing.expect(!state.mouseCaptured());
 }

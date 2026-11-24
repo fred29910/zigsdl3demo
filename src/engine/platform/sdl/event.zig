@@ -21,7 +21,7 @@ pub fn pollEvent() ?Event {
 
 /// `pollEvent` 的别名，兼容不同调用习惯。
 pub fn poll() ?Event {
-    return sdl.events.poll();
+    return pollEvent();
 }
 
 /// 是否存在某类事件。

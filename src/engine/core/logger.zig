@@ -34,7 +34,7 @@ pub const Logger = struct {
 
     /// 判断给定级别是否会被输出。
     pub fn enabled(self: Logger, level: Level) bool {
-        return @intFromEnum(level) >= @intFromEnum(self.level);
+        return @backingInt(level) >= @backingInt(self.level);
     }
 
     /// 将一条日志格式化写入 `buf`，返回已写入的切片（含换行）。
@@ -63,7 +63,10 @@ pub const Logger = struct {
     ) void {
         if (!self.enabled(level)) return;
         var buf: [1024]u8 = undefined;
-        const line = self.format(&buf, level, module, fmt, args) catch return;
+        const line = self.format(&buf, level, module, fmt, args) catch {
+            std.debug.print("[{s}] {s}: " ++ fmt ++ "\n", .{ levelName(level), module } ++ args);
+            return;
+        };
         std.debug.print("{s}", .{line});
     }
 

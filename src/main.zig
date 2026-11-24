@@ -1,70 +1,151 @@
-//! SDL3 Zig Demo — demo 窗口用新版 SDL bindings（https://github.com/fred29910/sdl3-zig）
-//! 替换原来的 @cImport 方式。
-const std = @import("std");
+//! SDL3 2D Demo，用于验证 M1 平台行为。
+const platform = @import("engine.platform.sdl");
 const sdl = @import("sdl3");
+const Logger = @import("zigsdl3demo").Logger;
+
+const log = Logger.init(.info);
 
 pub fn main() !void {
-    sdl.init(.{ .video = true, .events = true }) catch |err| {
-        std.debug.print("SDL 初始化失败: {s}\n", .{sdl.lastErrorText()});
+    platform.init() catch |err| {
+        log.log(.error_, "sdl", "初始化失败: {s}", .{sdl.lastErrorText()});
         return err;
     };
-    defer sdl.quit();
+    defer platform.deinit();
 
-    const window_width: i32 = 800;
-    const window_height: i32 = 600;
-
-    // WindowFlags.maximized 对应 SDL_WINDOW_MAXIMIZED（sdl3-zig/src/video.zig:251）。
-    // SDL3 源码中 SDL_MaximizeWindow 要求 SDL_WINDOW_RESIZABLE，否则直接返回 false
-    // （SDL_video.c:3508-3510），所以顺便把 resizable 打开。
-    const both = try sdl.createWindowAndRenderer("SDL3 Zig Demo", window_width, window_height, .{
+    const window = platform.window.createWithFlags("SDL3 Zig Demo", 800, 600, .{
         .resizable = true,
         .maximized = true,
-    });
-    defer both.renderer.deinit();
-    defer both.window.deinit();
+        .high_pixel_density = true,
+    }) catch |err| {
+        log.log(.error_, "sdl", "创建窗口失败: {s}", .{sdl.lastErrorText()});
+        return err;
+    };
+    defer platform.window.destroy(window);
 
-    const window = both.window;
-    const renderer = both.renderer;
+    const renderer = sdl.Renderer.init(window, null) catch |err| {
+        log.log(.error_, "sdl", "创建 2D 渲染器失败: {s}", .{sdl.lastErrorText()});
+        return err;
+    };
+    defer renderer.deinit();
 
-    // Window.maximize 是异步的：窗口管理器处理后窗口才变大
-    // （sdl3-zig/src/video.zig:354-356）。调 sync 等待确认，保证最大化生效。
-    try window.maximize();
-    try window.sync();
+    var vsync = true;
+    renderer.setVSync(1) catch {
+        vsync = false;
+        log.log(.warn, "sdl", "无法启用 VSync，使用帧间延时: {s}", .{sdl.lastErrorText()});
+    };
 
-    std.debug.print("SDL3 Demo 启动成功!\n", .{});
-    std.debug.print("窗口大小: {d}x{d}\n", .{ window_width, window_height });
-    std.debug.print("按 ESC 键或点击关闭按钮退出\n", .{});
+    const window_id = window.id();
+    var input = platform.InputState.initWithWindow(window);
+    const initial_flags = window.flags();
+    var focused = initial_flags.input_focus;
+    var minimized = initial_flags.minimized;
+    var logical_size = try window.size();
+    var pixel_size = try window.sizeInPixels();
+    var mouse_offset = platform.MouseDelta{};
 
-    // 主事件循环
-    main: while (true) {
-        while (sdl.events.poll()) |event| switch (event) {
-            .quit => break :main,
-            .window => |e| if (e.kind == .close_requested or e.window_id != window.id()) break :main,
-            .key_down => |e| if (e.key == .escape) break :main,
-            else => {},
+    log.log(.info, "demo", "WASD 移动，左键触发动作，Tab 捕获或释放鼠标，Esc 退出", .{});
+    logSizes(logical_size, pixel_size);
+
+    loop: while (true) {
+        input.beginFrame();
+        var size_changed = false;
+        while (platform.event.poll()) |event| {
+            switch (event) {
+                .quit => break :loop,
+                .window => |e| {
+                    if (e.window_id != window_id) continue;
+                    switch (e.kind) {
+                        .close_requested => break :loop,
+                        .resized => |size| {
+                            logical_size = size;
+                            size_changed = true;
+                        },
+                        .pixel_size_changed => |size| {
+                            pixel_size = size;
+                            size_changed = true;
+                        },
+                        .restored, .maximized => minimized = false,
+                        .focus_lost, .minimized => {
+                            if (e.kind == .minimized) minimized = true else focused = false;
+                            input.releaseAll();
+                            if (input.mouseCaptured()) setCapture(&input, false);
+                        },
+                        .focus_gained => focused = true,
+                        else => {},
+                    }
+                },
+                .key_down => |e| {
+                    if (e.window_id != window_id or !focused) continue;
+                    if (e.scancode == .escape) break :loop;
+                    if (e.scancode == .tab and !e.repeat and !minimized)
+                        setCapture(&input, !input.mouseCaptured());
+                },
+                else => {},
+            }
+            if (focused and !minimized) input.handleEvent(event);
+        }
+        if (size_changed) logSizes(logical_size, pixel_size);
+        if (minimized or pixel_size.width <= 0 or pixel_size.height <= 0) {
+            sdl.timer.delay(40);
+            continue;
+        }
+
+        if (focused and input.mouseCaptured()) {
+            const delta = input.mouseDelta();
+            const half_width = @as(f32, @floatFromInt(pixel_size.width)) / 2;
+            const half_height = @as(f32, @floatFromInt(pixel_size.height)) / 2;
+            mouse_offset.x = @min(half_width, @max(-half_width, mouse_offset.x + delta.x));
+            mouse_offset.y = @min(half_height, @max(-half_height, mouse_offset.y + delta.y));
+        }
+        if (input.pressed(.fire)) log.log(.info, "input", "检测到左键按下", .{});
+
+        draw(renderer, pixel_size, &input, mouse_offset) catch |err| {
+            log.log(.error_, "sdl", "绘制失败: {s}", .{sdl.lastErrorText()});
+            return err;
         };
-
-        // 清屏为深蓝色
-        try renderer.setDrawColorFloat(.{ .r = 0.1, .g = 0.2, .b = 0.4, .a = 1.0 });
-        try renderer.clear();
-
-        // 绘制一个红色的矩形
-        try renderer.setDrawColorFloat(.{ .r = 1.0, .g = 0.2, .b = 0.2, .a = 1.0 });
-        const rect: sdl.FRect = .{
-            .x = @floatFromInt(window_width / 2 - 50),
-            .y = @floatFromInt(window_height / 2 - 50),
-            .w = 100,
-            .h = 100,
-        };
-        try renderer.fillRect(rect);
-
-        // 绘制白色边框
-        try renderer.setDrawColorFloat(.{ .r = 1.0, .g = 1.0, .b = 1.0, .a = 1.0 });
-        try renderer.rect(rect);
-
-        // 呈现画面
-        try renderer.present();
+        if (!vsync) sdl.timer.delay(16);
     }
 
-    std.debug.print("SDL3 Demo 退出\n", .{});
+    log.log(.info, "demo", "退出", .{});
+}
+
+fn setCapture(input: *platform.InputState, captured: bool) void {
+    input.setMouseCaptured(captured) catch {
+        log.log(.warn, "input", "无法更改相对鼠标模式: {s}", .{sdl.lastErrorText()});
+        return;
+    };
+    log.log(.info, "input", "相对鼠标模式: {s}", .{if (input.mouseCaptured()) "开启" else "关闭"});
+}
+
+fn logSizes(logical: sdl.Size, pixels: sdl.Size) void {
+    log.log(.info, "window", "窗口 {d}x{d}，像素 {d}x{d}", .{
+        logical.width, logical.height, pixels.width, pixels.height,
+    });
+}
+
+fn draw(renderer: sdl.Renderer, size: sdl.Size, input: *const platform.InputState, offset: platform.MouseDelta) !void {
+    const width: f32 = @floatFromInt(size.width);
+    const height: f32 = @floatFromInt(size.height);
+    const side = @min(100, @min(width, height));
+    const dx: f32 = @floatFromInt(@as(i32, @intFromBool(input.isDown(.move_right))) -
+        @as(i32, @intFromBool(input.isDown(.move_left))));
+    const dy: f32 = @floatFromInt(@as(i32, @intFromBool(input.isDown(.move_back))) -
+        @as(i32, @intFromBool(input.isDown(.move_forward))));
+    const rect: sdl.FRect = .{
+        .x = @min(width - side, @max(0, (width - side) / 2 + offset.x + dx * 32)),
+        .y = @min(height - side, @max(0, (height - side) / 2 + offset.y + dy * 32)),
+        .w = side,
+        .h = side,
+    };
+
+    try renderer.setDrawColorFloat(.{ .r = 0.1, .g = 0.2, .b = 0.4, .a = 1.0 });
+    try renderer.clear();
+    try renderer.setDrawColorFloat(if (input.isDown(.fire) or input.pressed(.fire))
+        .{ .r = 1.0, .g = 0.7, .b = 0.2, .a = 1.0 }
+    else
+        .{ .r = 1.0, .g = 0.2, .b = 0.2, .a = 1.0 });
+    try renderer.fillRect(rect);
+    try renderer.setDrawColorFloat(.{ .r = 1.0, .g = 1.0, .b = 1.0, .a = 1.0 });
+    try renderer.rect(rect);
+    try renderer.present();
 }
