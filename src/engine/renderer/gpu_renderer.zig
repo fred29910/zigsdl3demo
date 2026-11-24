@@ -12,6 +12,28 @@ pub const GpuRenderer = struct {
 
     pub const Extent = struct { width: u32, height: u32 };
 
+    pub const Frame = struct {
+        commands: *sdl.gpu.CommandBuffer,
+        texture: *sdl.gpu.Texture,
+        extent: Extent,
+
+        pub fn colorTarget(self: Frame, load_op: sdl.gpu.LoadOp) sdl.gpu.ColorTargetInfo {
+            return .{
+                .texture = self.texture,
+                .clear_color = clear_color,
+                .load_op = load_op,
+                .store_op = .store,
+            };
+        }
+
+        pub fn submit(self: Frame) !void {
+            self.commands.submit() catch |err| {
+                log.log(.error_, "gpu", "提交命令缓冲失败: {s}", .{sdl.lastErrorText()});
+                return err;
+            };
+        }
+    };
+
     pub fn init(window: sdl.Window) !GpuRenderer {
         const device = sdl.gpu.Device.init(.{ .spirv = true }, builtin.mode == .debug, "vulkan") catch |err| {
             log.log(.error_, "gpu", "创建 Vulkan 设备失败: {s}", .{sdl.lastErrorText()});
@@ -47,7 +69,7 @@ pub const GpuRenderer = struct {
     }
 
     /// Returns null when SDL skips presentation, for example during minimization.
-    pub fn clear(self: GpuRenderer) !?Extent {
+    pub fn acquireFrame(self: GpuRenderer) !?Frame {
         const commands = self.device.acquireCommandBuffer() catch |err| {
             log.log(.error_, "gpu", "获取命令缓冲失败: {s}", .{sdl.lastErrorText()});
             return err;
@@ -61,34 +83,30 @@ pub const GpuRenderer = struct {
             try cancel(commands);
             return null;
         };
-
-        const pass = commands.beginRenderPass(&.{.{
+        return .{
+            .commands = commands,
             .texture = texture,
-            .clear_color = clear_color,
-            .load_op = .clear,
-            .store_op = .store,
-        }}, null) catch |err| {
+            .extent = .{ .width = swapchain.width, .height = swapchain.height },
+        };
+    }
+
+    pub fn clear(self: GpuRenderer) !?Extent {
+        const frame = (try self.acquireFrame()) orelse return null;
+        const pass = frame.commands.beginRenderPass(&.{frame.colorTarget(.clear)}, null) catch |err| {
             log.log(.error_, "gpu", "开始清屏 Render Pass 失败: {s}", .{sdl.lastErrorText()});
             // After acquiring a swapchain image, SDL requires submission even on failure.
-            submit(commands) catch {};
+            frame.submit() catch {};
             return err;
         };
         pass.end();
-        try submit(commands);
-        return .{ .width = swapchain.width, .height = swapchain.height };
+        try frame.submit();
+        return frame.extent;
     }
 };
 
 fn cancel(commands: *sdl.gpu.CommandBuffer) !void {
     commands.cancel() catch |err| {
         log.log(.error_, "gpu", "取消命令缓冲失败: {s}", .{sdl.lastErrorText()});
-        return err;
-    };
-}
-
-fn submit(commands: *sdl.gpu.CommandBuffer) !void {
-    commands.submit() catch |err| {
-        log.log(.error_, "gpu", "提交命令缓冲失败: {s}", .{sdl.lastErrorText()});
         return err;
     };
 }

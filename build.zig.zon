@@ -32,6 +32,11 @@
     // Once all dependencies are fetched, `zig build` no longer requires
     // internet connectivity.
     .dependencies = .{
+        .imgui = .{
+            .url = "https://github.com/ocornut/imgui/archive/refs/tags/v1.92.5.tar.gz",
+            .hash = "N-V-__8AALp9cwA8tEuEno2YCZyivsMaobnF-Z7qZGY3qBOt",
+            .lazy = true,
+        },
         .sdl3 = .{
             .url = "git+https://github.com/fred29910/sdl3-zig.git#aaa5868464855ab0bda4dffe1cf424709f665669",
             .hash = "sdl3-0.1.0-WOwCypO_BACuJ0ijR3Y3kamzX0Ds_uzIaY-ucLwBdPog",
@@ -41,6 +46,7 @@
         "build.zig",
         "build.zig.zon",
         "src",
+        "shaders",
         "README.md",
     },
 }

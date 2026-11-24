@@ -9,18 +9,22 @@ comptime {
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const demo_2d = b.option(bool, "demo-2d", "Run the M1 SDL 2D input demo") orelse false;
+    const clear_only = b.option(bool, "clear-only", "Run the M2 Vulkan clear demo") orelse false;
     const options = b.addOptions();
-    options.addOption(bool, "demo_2d", b.option(bool, "demo-2d", "Run the M1 SDL 2D input demo") orelse false);
+    options.addOption(bool, "demo_2d", demo_2d);
+    options.addOption(bool, "clear_only", clear_only);
 
     const core = b.addModule("zigsdl3demo", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
-    const sdl3 = b.dependency("sdl3", .{
+    const sdl_package = b.dependency("sdl3", .{
         .target = target,
         .optimize = optimize,
-    }).module("sdl3");
+    });
+    const sdl3 = sdl_package.module("sdl3");
     const platform = b.addModule("engine.platform.sdl", .{
         .root_source_file = b.path("src/engine/platform/sdl.zig"),
         .target = target,
@@ -42,6 +46,25 @@ pub fn build(b: *std.Build) void {
         }),
     });
     exe.root_module.addOptions("build_options", options);
+    configureShaders(b, exe.root_module);
+    if (!demo_2d and !clear_only) {
+        if (b.lazyDependency("imgui", .{})) |imgui| {
+            const app = exe.root_module;
+            app.link_libcpp = true;
+            app.addIncludePath(imgui.path(""));
+            app.addIncludePath(imgui.path("backends"));
+            app.addIncludePath(sdl_package.artifact("SDL3").getEmittedIncludeTree());
+            app.addCSourceFiles(.{
+                .root = imgui.path(""),
+                .files = &.{
+                    "imgui.cpp",                    "imgui_draw.cpp",                  "imgui_widgets.cpp", "imgui_tables.cpp",
+                    "backends/imgui_impl_sdl3.cpp", "backends/imgui_impl_sdlgpu3.cpp",
+                },
+                .flags = &.{"-std=c++17"},
+            });
+            app.addCSourceFile(.{ .file = b.path("src/engine/renderer/imgui_bridge.cpp"), .flags = &.{"-std=c++17"} });
+        }
+    }
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);
@@ -53,5 +76,28 @@ pub fn build(b: *std.Build) void {
     for ([_]*std.Build.Module{ core, platform, exe.root_module }) |module| {
         const tests = b.addTest(.{ .root_module = module });
         test_step.dependOn(&b.addRunArtifact(tests).step);
+    }
+}
+
+fn configureShaders(b: *std.Build, app: *std.Build.Module) void {
+    const tool: ?[]const u8 = if (b.option([]const u8, "shadercross", "Path to SDL_shadercross for rebuilding embedded shaders")) |path|
+        path
+    else
+        b.findProgram(.{ .names = &.{"shadercross"} });
+    const shaders = b.step("shaders", "Compile HLSL to SPIR-V and install the results");
+    const programs = .{
+        .{ "demo.vert", "vertex" },
+        .{ "demo.frag", "fragment" },
+    };
+    inline for (programs) |program| {
+        const name, const stage = program;
+        const compile = b.addSystemCommand(&.{tool orelse "shadercross"});
+        compile.addFileArg(b.path("shaders/" ++ name ++ ".hlsl"));
+        compile.addArgs(&.{ "-s", "HLSL", "-d", "SPIRV", "-t", stage, "-o" });
+        const generated = compile.addOutputFileArg(name ++ ".spv");
+        shaders.dependOn(&b.addInstallFile(generated, "shaders/" ++ name ++ ".spv").step);
+        app.addAnonymousImport(name ++ ".spv", .{
+            .root_source_file = if (tool != null) generated else b.path("shaders/" ++ name ++ ".spv"),
+        });
     }
 }

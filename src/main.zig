@@ -1,9 +1,12 @@
-//! M2 Vulkan 清屏 Demo，复用 M1 平台事件循环。
+//! M3 Vulkan 渲染 Demo，复用 M1 平台事件循环和 M2 交换链。
 const platform = @import("engine.platform.sdl");
 const sdl = @import("sdl3");
 const Logger = @import("zigsdl3demo").Logger;
 const GpuRenderer = @import("engine/renderer/gpu_renderer.zig").GpuRenderer;
-const demo_2d = @import("build_options").demo_2d;
+const Scene = @import("engine/renderer/demo_scene.zig").Scene;
+const options = @import("build_options");
+const demo_2d = options.demo_2d;
+const show_scene = !demo_2d and !options.clear_only;
 
 const log = Logger.init(.info);
 
@@ -33,6 +36,11 @@ pub fn main() !void {
     else
         try GpuRenderer.init(window);
     defer renderer.deinit();
+    var scene = if (show_scene) Scene.init(renderer) catch |err| {
+        log.log(.error_, "scene", "初始化失败 ({s}): {s}", .{ @errorName(err), sdl.lastErrorText() });
+        return err;
+    } else {};
+    defer if (show_scene) scene.deinit();
 
     var vsync = true;
     if (demo_2d) renderer.setVSync(1) catch {
@@ -49,17 +57,25 @@ pub fn main() !void {
     var pixel_size = try window.sizeInPixels();
     var mouse_offset = platform.MouseDelta{};
     var last_extent = GpuRenderer.Extent{ .width = 0, .height = 0 };
+    var previous_ns = sdl.timer.ticksNs();
 
     if (demo_2d)
         log.log(.info, "demo", "WASD 移动，左键触发动作，Tab 捕获或释放鼠标，Esc 退出", .{})
+    else if (show_scene)
+        log.log(.info, "demo", "Tab 捕获鼠标，WASD/空格/Ctrl 飞行，Esc 退出", .{})
     else
         log.log(.info, "demo", "Vulkan 固定色清屏，Tab 捕获或释放鼠标，Esc 退出", .{});
     logSizes(logical_size, pixel_size);
 
     loop: while (true) {
+        const now_ns = sdl.timer.ticksNs();
+        const frame_seconds = @as(f32, @floatFromInt(now_ns - previous_ns)) / 1e9;
+        previous_ns = now_ns;
         input.beginFrame();
         var size_changed = false;
-        while (platform.event.poll()) |event| {
+        while (platform.event.pollRaw()) |raw_event| {
+            if (show_scene) Scene.processEvent(&raw_event);
+            const event = platform.event.fromRaw(raw_event);
             switch (event) {
                 .quit => break :loop,
                 .window => |e| {
@@ -115,17 +131,27 @@ pub fn main() !void {
                 return err;
             };
             if (!vsync) sdl.timer.delay(16);
-        } else if (try renderer.clear()) |extent| {
-            if (extent.width != last_extent.width or extent.height != last_extent.height) {
-                log.log(.info, "gpu", "已提交清屏帧 {d}x{d}", .{ extent.width, extent.height });
-                last_extent = extent;
-            }
         } else {
-            sdl.timer.delay(16);
+            const extent = if (show_scene)
+                try scene.render(renderer, &input, frame_seconds)
+            else
+                try renderer.clear();
+            if (extent) |size| {
+                if (size.width != last_extent.width or size.height != last_extent.height) {
+                    log.log(.info, "gpu", "已提交 {d}x{d} 帧", .{ size.width, size.height });
+                    last_extent = size;
+                }
+            } else {
+                sdl.timer.delay(16);
+            }
         }
     }
 
     log.log(.info, "demo", "退出", .{});
+}
+
+test {
+    _ = @import("engine/renderer/camera.zig");
 }
 
 fn setCapture(input: *platform.InputState, captured: bool) void {

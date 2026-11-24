@@ -13,6 +13,8 @@ pub const EventType = sdl.EventType;
 
 /// 窗口事件（透传）。
 pub const WindowEvent = sdl.events.WindowEvent;
+pub const pollRaw = sdl.events.pollRaw;
+pub const fromRaw = sdl.events.fromRaw;
 
 /// 轮询下一个事件；队列为空返回 null。
 pub fn pollEvent() ?Event {
