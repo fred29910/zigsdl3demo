@@ -37,14 +37,15 @@ extern "C" void demo_imgui_event(const SDL_Event *event)
     ImGui_ImplSDL3_ProcessEvent(event);
 }
 
-extern "C" void demo_imgui_prepare(SDL_GPUCommandBuffer *commands, float ms, bool captured, float *speed)
+extern "C" void demo_imgui_prepare(SDL_GPUCommandBuffer *commands, float ms, bool captured, float *speed, size_t draw_count)
 {
     ImGui_ImplSDLGPU3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     ImGui::SetNextWindowPos(ImVec2(12, 12), ImGuiCond_Once);
-    if (ImGui::Begin("M3 | Rendering", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::Begin("Scene", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Frame: %.2f ms  (%.0f FPS)", ms, ms > 0.0f ? 1000.0f / ms : 0.0f);
+        ImGui::Text("Opaque draws: %zu", draw_count);
         ImGui::TextUnformatted(captured ? "Tab: release mouse" : "Tab: capture mouse");
         ImGui::TextUnformatted("WASD: fly | Space / Ctrl: up / down");
         ImGui::SetNextItemWidth(170);

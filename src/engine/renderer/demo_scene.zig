@@ -1,10 +1,15 @@
-//! M3 scene and its GPU resources. The window and GPU device belong to GpuRenderer.
+//! Demo scene and its GPU resources. The window and GPU device belong to GpuRenderer.
 const std = @import("std");
 const sdl = @import("sdl3");
 const Logger = @import("zigsdl3demo").Logger;
 const InputState = @import("engine.platform.sdl").InputState;
 const GpuRenderer = @import("gpu_renderer.zig").GpuRenderer;
 const Camera = @import("camera.zig").Camera;
+const RenderQueue = @import("render_queue.zig").RenderQueue;
+const RenderItem = @import("render_queue.zig").RenderItem;
+const scene = @import("../scene/registry.zig");
+const resources = @import("../scene/mesh_renderer.zig");
+const transform = @import("../scene/transform.zig");
 
 const gpu = sdl.gpu;
 const raw = sdl.raw;
@@ -15,10 +20,18 @@ const depth_usage: gpu.TextureUsage = .{ .depth_stencil_target = true };
 extern fn demo_imgui_init(window: *raw.SDL_Window, device: *raw.SDL_GPUDevice) bool;
 extern fn demo_imgui_shutdown() void;
 extern fn demo_imgui_event(event: *const raw.SDL_Event) void;
-extern fn demo_imgui_prepare(commands: *raw.SDL_GPUCommandBuffer, ms: f32, captured: bool, speed: *f32) void;
+extern fn demo_imgui_prepare(commands: *raw.SDL_GPUCommandBuffer, ms: f32, captured: bool, speed: *f32, draw_count: usize) void;
 extern fn demo_imgui_draw(commands: *raw.SDL_GPUCommandBuffer, pass: *raw.SDL_GPURenderPass) void;
 
-pub const Scene = struct {
+const DrawUniforms = extern struct {
+    camera: Camera.Uniforms,
+    model: transform.Matrix,
+};
+
+pub const DemoScene = struct {
+    registry: scene.Registry,
+    queue: RenderQueue,
+    spinning_cube: scene.Entity,
     device: *gpu.Device,
     pipeline: *gpu.GraphicsPipeline,
     vertices: *gpu.Buffer,
@@ -32,7 +45,20 @@ pub const Scene = struct {
     rotation: f32 = 0.45,
     rotation_speed: f32 = 0.85,
 
-    pub fn init(renderer: GpuRenderer) !Scene {
+    pub fn init(renderer: GpuRenderer, allocator: std.mem.Allocator) !DemoScene {
+        var registry = scene.Registry.init(allocator);
+        errdefer registry.deinit();
+        const cube = try registry.create();
+        try registry.add(cube, transform.Transform{});
+        try registry.add(cube, resources.MeshRenderer{ .mesh = .cube });
+        const child = try registry.create();
+        try registry.add(child, transform.Transform{ .position = .{ 2.2, 0, 0 }, .scale = @splat(0.32) });
+        try registry.add(child, resources.MeshRenderer{ .mesh = .cube });
+        try registry.setParent(child, cube);
+        const triangle = try registry.create();
+        try registry.add(triangle, transform.Transform{ .position = .{ -1.6, -0.35, 1.2 } });
+        try registry.add(triangle, resources.MeshRenderer{ .mesh = .triangle });
+
         const device = renderer.device;
         const depth_format: gpu.TextureFormat = if (device.supportsTextureFormat(.d32_float, .two_d, depth_usage))
             .d32_float
@@ -57,8 +83,11 @@ pub const Scene = struct {
         errdefer device.releaseSampler(sampler);
         try upload(device, vertices, indices, texture);
         if (!demo_imgui_init(renderer.window.handle, @ptrCast(device))) return error.ImGuiInit;
-        log.log(.info, "scene", "纹理立方体、索引三角形和 ImGui 就绪，深度格式 {s}", .{@tagName(depth_format)});
+        log.log(.info, "scene", "场景已就绪：父子立方体和索引三角形，深度格式 {s}", .{@tagName(depth_format)});
         return .{
+            .registry = registry,
+            .queue = RenderQueue.init(allocator),
+            .spinning_cube = cube,
             .device = device,
             .pipeline = pipeline,
             .vertices = vertices,
@@ -69,7 +98,7 @@ pub const Scene = struct {
         };
     }
 
-    pub fn deinit(self: Scene) void {
+    pub fn deinit(self: *DemoScene) void {
         self.device.waitForIdle() catch {
             log.log(.warn, "scene", "等待 GPU 空闲失败: {s}", .{sdl.lastErrorText()});
         };
@@ -80,20 +109,29 @@ pub const Scene = struct {
         self.device.releaseBuffer(self.indices);
         self.device.releaseBuffer(self.vertices);
         self.device.releaseGraphicsPipeline(self.pipeline);
+        self.queue.deinit();
+        self.registry.deinit();
     }
 
     pub fn processEvent(event: *const raw.SDL_Event) void {
         demo_imgui_event(event);
     }
 
-    pub fn render(self: *Scene, renderer: GpuRenderer, input: *const InputState, dt: f32) !?GpuRenderer.Extent {
-        const frame = (try renderer.acquireFrame()) orelse return null;
+    pub fn render(self: *DemoScene, renderer: GpuRenderer, input: *const InputState, dt: f32) !?GpuRenderer.Extent {
         const step = @min(dt, 0.05);
         const captured = input.mouseCaptured();
         if (captured) self.camera.update(input, step);
         self.rotation = @mod(self.rotation + step * self.rotation_speed, 200.0 * std.math.pi);
+        const yaw = transform.Rotation.axisAngle(.{ 0, 1, 0 }, self.rotation);
+        const tilt = transform.Rotation.axisAngle(.{ 1, 0, 0 }, self.rotation * 0.73);
+        var local = self.registry.get(self.spinning_cube, transform.Transform).?;
+        local.rotation = tilt.mul(yaw);
+        try self.registry.add(self.spinning_cube, local);
+        // Finish CPU work, including allocation, before acquiring a swapchain texture.
+        const items = try self.queue.collect(&self.registry);
 
-        self.record(frame, dt * 1000, captured) catch |err| {
+        const frame = (try renderer.acquireFrame()) orelse return null;
+        self.record(frame, items, dt * 1000, captured) catch |err| {
             log.log(.error_, "scene", "录制场景命令失败: {s}", .{sdl.lastErrorText()});
             frame.submit() catch {};
             return err;
@@ -102,9 +140,9 @@ pub const Scene = struct {
         return frame.extent;
     }
 
-    fn record(self: *Scene, frame: GpuRenderer.Frame, frame_ms: f32, captured: bool) !void {
+    fn record(self: *DemoScene, frame: GpuRenderer.Frame, items: []const RenderItem, frame_ms: f32, captured: bool) !void {
         const depth = try self.depthTarget(frame.extent);
-        demo_imgui_prepare(@ptrCast(frame.commands), frame_ms, captured, &self.rotation_speed);
+        demo_imgui_prepare(@ptrCast(frame.commands), frame_ms, captured, &self.rotation_speed, items.len);
         const pass = try frame.commands.beginRenderPass(&.{frame.colorTarget(.clear)}, &.{
             .texture = depth,
             .load_op = .clear,
@@ -117,12 +155,22 @@ pub const Scene = struct {
         pass.bindGraphicsPipeline(self.pipeline);
         pass.bindVertexBuffers(0, &.{.{ .buffer = self.vertices }});
         pass.bindIndexBuffer(.{ .buffer = self.indices }, .u16);
-        pass.bindFragmentSamplers(0, &.{.{ .texture = self.texture, .sampler = self.sampler }});
-        frame.commands.pushVertexUniform(0, self.camera.uniforms(aspect, .{ 0, 0, 0, self.rotation }));
-        pass.drawIndexedPrimitives(cube_index_count, 1, 0, 0, 0);
-        // Draw the triangle second and behind the cube to demonstrate depth occlusion.
-        frame.commands.pushVertexUniform(0, self.camera.uniforms(aspect, .{ -1.6, -0.35, 1.2, 0 }));
-        pass.drawIndexedPrimitives(3, 1, cube_index_count, 0, 0);
+        const camera = self.camera.uniforms(aspect);
+        var bound_material: ?resources.MaterialId = null;
+        for (items) |item| {
+            if (bound_material != item.material) {
+                switch (item.material) {
+                    .checker => pass.bindFragmentSamplers(0, &.{.{ .texture = self.texture, .sampler = self.sampler }}),
+                }
+                bound_material = item.material;
+            }
+            const first_index, const index_count = switch (item.mesh) {
+                .cube => .{ @as(u32, 0), cube_index_count },
+                .triangle => .{ cube_index_count, @as(u32, 3) },
+            };
+            frame.commands.pushVertexUniform(0, DrawUniforms{ .camera = camera, .model = item.model });
+            pass.drawIndexedPrimitives(index_count, 1, first_index, 0, 0);
+        }
         pass.end();
 
         const overlay = try frame.commands.beginRenderPass(&.{frame.colorTarget(.load)}, null);
@@ -130,7 +178,7 @@ pub const Scene = struct {
         overlay.end();
     }
 
-    fn depthTarget(self: *Scene, extent: GpuRenderer.Extent) !*gpu.Texture {
+    fn depthTarget(self: *DemoScene, extent: GpuRenderer.Extent) !*gpu.Texture {
         if (self.depth) |depth| {
             if (std.meta.eql(self.depth_extent, extent)) return depth;
         }
@@ -248,7 +296,7 @@ const mesh_vertices =
         .{ .position = .{ 0, 1, 0 }, .uv = .{ 0.5, 0 } },
     };
 
-const cube_index_count = 36;
+const cube_index_count: u32 = 36;
 const mesh_indices = [_]u16{
     0,  1,  2,  0,  2,  3,  4,  5,  6,  4,  6,  7,
     8,  9,  10, 8,  10, 11, 12, 13, 14, 12, 14, 15,

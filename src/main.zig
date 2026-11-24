@@ -1,9 +1,10 @@
-//! M3 Vulkan 渲染 Demo，复用 M1 平台事件循环和 M2 交换链。
+//! Vulkan 场景 Demo，复用 M1 平台事件循环和 M2 交换链。
+const std = @import("std");
 const platform = @import("engine.platform.sdl");
 const sdl = @import("sdl3");
 const Logger = @import("zigsdl3demo").Logger;
 const GpuRenderer = @import("engine/renderer/gpu_renderer.zig").GpuRenderer;
-const Scene = @import("engine/renderer/demo_scene.zig").Scene;
+const DemoScene = @import("engine/renderer/demo_scene.zig").DemoScene;
 const options = @import("build_options");
 const demo_2d = options.demo_2d;
 const show_scene = !demo_2d and !options.clear_only;
@@ -36,7 +37,7 @@ pub fn main() !void {
     else
         try GpuRenderer.init(window);
     defer renderer.deinit();
-    var scene = if (show_scene) Scene.init(renderer) catch |err| {
+    var scene = if (show_scene) DemoScene.init(renderer, std.heap.page_allocator) catch |err| {
         log.log(.error_, "scene", "初始化失败 ({s}): {s}", .{ @errorName(err), sdl.lastErrorText() });
         return err;
     } else {};
@@ -74,7 +75,7 @@ pub fn main() !void {
         input.beginFrame();
         var size_changed = false;
         while (platform.event.pollRaw()) |raw_event| {
-            if (show_scene) Scene.processEvent(&raw_event);
+            if (show_scene) DemoScene.processEvent(&raw_event);
             const event = platform.event.fromRaw(raw_event);
             switch (event) {
                 .quit => break :loop,
@@ -152,6 +153,7 @@ pub fn main() !void {
 
 test {
     _ = @import("engine/renderer/camera.zig");
+    _ = @import("engine/renderer/render_queue.zig");
 }
 
 fn setCapture(input: *platform.InputState, captured: bool) void {

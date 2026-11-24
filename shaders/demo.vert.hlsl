@@ -5,7 +5,9 @@ cbuffer Frame : register(b0, space1)
     float4 up;
     float4 forward;
     float4 projection; // x/y scale, z scale, z offset
-    float4 model;      // translation.xyz, rotation in radians
+    float4 model_row0;
+    float4 model_row1;
+    float4 model_row2;
 };
 
 struct VertexInput
@@ -22,14 +24,9 @@ struct VertexOutput
 
 VertexOutput main(VertexInput input)
 {
-    float s, c, tiltS, tiltC;
-    sincos(model.w, s, c);
-    sincos(model.w * 0.73, tiltS, tiltC);
-    float3 p = input.position;
-    float3 yawed = float3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
-    float3 rotated = float3(yawed.x, tiltC * yawed.y - tiltS * yawed.z,
-                           tiltS * yawed.y + tiltC * yawed.z);
-    float3 relative = rotated + model.xyz - eye.xyz;
+    float4 p = float4(input.position, 1.0);
+    float3 world = float3(dot(model_row0, p), dot(model_row1, p), dot(model_row2, p));
+    float3 relative = world - eye.xyz;
     float3 view = float3(dot(relative, right.xyz), dot(relative, up.xyz), dot(relative, forward.xyz));
 
     VertexOutput output;

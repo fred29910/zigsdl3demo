@@ -15,7 +15,6 @@ pub const Camera = struct {
         up: [4]f32,
         forward: [4]f32,
         projection: [4]f32,
-        model: [4]f32,
     };
 
     fn basis(self: Camera) struct { right: Vec3, up: Vec3, forward: Vec3 } {
@@ -49,7 +48,7 @@ pub const Camera = struct {
         }
     }
 
-    pub fn uniforms(self: Camera, aspect: f32, model: [4]f32) Uniforms {
+    pub fn uniforms(self: Camera, aspect: f32) Uniforms {
         const axes = self.basis();
         const f = 1.0 / @tan(std.math.pi / 6.0);
         const near = 0.1;
@@ -60,7 +59,6 @@ pub const Camera = struct {
             .up = pack(axes.up),
             .forward = pack(axes.forward),
             .projection = .{ f / aspect, f, far / (far - near), -near * far / (far - near) },
-            .model = model,
         };
     }
 };
@@ -70,7 +68,7 @@ fn pack(v: Vec3) [4]f32 {
 }
 
 test "perspective maps near and far planes to the SDL depth range" {
-    const p = (Camera{}).uniforms(2, @splat(0)).projection;
+    const p = (Camera{}).uniforms(2).projection;
     try std.testing.expectApproxEqAbs(p[1], p[0] * 2, 0.00001);
     try std.testing.expectApproxEqAbs(@as(f32, 0), (0.1 * p[2] + p[3]) / 0.1, 0.00001);
     try std.testing.expectApproxEqAbs(@as(f32, 1), (100 * p[2] + p[3]) / 100, 0.00001);
