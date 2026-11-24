@@ -1,7 +1,9 @@
-//! SDL3 2D Demo，用于验证 M1 平台行为。
+//! M2 Vulkan 清屏 Demo，复用 M1 平台事件循环。
 const platform = @import("engine.platform.sdl");
 const sdl = @import("sdl3");
 const Logger = @import("zigsdl3demo").Logger;
+const GpuRenderer = @import("engine/renderer/gpu_renderer.zig").GpuRenderer;
+const demo_2d = @import("build_options").demo_2d;
 
 const log = Logger.init(.info);
 
@@ -16,20 +18,24 @@ pub fn main() !void {
         .resizable = true,
         .maximized = true,
         .high_pixel_density = true,
+        .vulkan = !demo_2d,
     }) catch |err| {
         log.log(.error_, "sdl", "创建窗口失败: {s}", .{sdl.lastErrorText()});
         return err;
     };
     defer platform.window.destroy(window);
 
-    const renderer = sdl.Renderer.init(window, null) catch |err| {
-        log.log(.error_, "sdl", "创建 2D 渲染器失败: {s}", .{sdl.lastErrorText()});
-        return err;
-    };
+    const renderer = if (demo_2d)
+        sdl.Renderer.init(window, null) catch |err| {
+            log.log(.error_, "sdl", "创建 2D 渲染器失败: {s}", .{sdl.lastErrorText()});
+            return err;
+        }
+    else
+        try GpuRenderer.init(window);
     defer renderer.deinit();
 
     var vsync = true;
-    renderer.setVSync(1) catch {
+    if (demo_2d) renderer.setVSync(1) catch {
         vsync = false;
         log.log(.warn, "sdl", "无法启用 VSync，使用帧间延时: {s}", .{sdl.lastErrorText()});
     };
@@ -42,8 +48,12 @@ pub fn main() !void {
     var logical_size = try window.size();
     var pixel_size = try window.sizeInPixels();
     var mouse_offset = platform.MouseDelta{};
+    var last_extent = GpuRenderer.Extent{ .width = 0, .height = 0 };
 
-    log.log(.info, "demo", "WASD 移动，左键触发动作，Tab 捕获或释放鼠标，Esc 退出", .{});
+    if (demo_2d)
+        log.log(.info, "demo", "WASD 移动，左键触发动作，Tab 捕获或释放鼠标，Esc 退出", .{})
+    else
+        log.log(.info, "demo", "Vulkan 固定色清屏，Tab 捕获或释放鼠标，Esc 退出", .{});
     logSizes(logical_size, pixel_size);
 
     loop: while (true) {
@@ -90,7 +100,7 @@ pub fn main() !void {
             continue;
         }
 
-        if (focused and input.mouseCaptured()) {
+        if (demo_2d and focused and input.mouseCaptured()) {
             const delta = input.mouseDelta();
             const half_width = @as(f32, @floatFromInt(pixel_size.width)) / 2;
             const half_height = @as(f32, @floatFromInt(pixel_size.height)) / 2;
@@ -99,11 +109,20 @@ pub fn main() !void {
         }
         if (input.pressed(.fire)) log.log(.info, "input", "检测到左键按下", .{});
 
-        draw(renderer, pixel_size, &input, mouse_offset) catch |err| {
-            log.log(.error_, "sdl", "绘制失败: {s}", .{sdl.lastErrorText()});
-            return err;
-        };
-        if (!vsync) sdl.timer.delay(16);
+        if (demo_2d) {
+            draw(renderer, pixel_size, &input, mouse_offset) catch |err| {
+                log.log(.error_, "sdl", "绘制失败: {s}", .{sdl.lastErrorText()});
+                return err;
+            };
+            if (!vsync) sdl.timer.delay(16);
+        } else if (try renderer.clear()) |extent| {
+            if (extent.width != last_extent.width or extent.height != last_extent.height) {
+                log.log(.info, "gpu", "已提交清屏帧 {d}x{d}", .{ extent.width, extent.height });
+                last_extent = extent;
+            }
+        } else {
+            sdl.timer.delay(16);
+        }
     }
 
     log.log(.info, "demo", "退出", .{});

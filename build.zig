@@ -9,6 +9,8 @@ comptime {
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const options = b.addOptions();
+    options.addOption(bool, "demo_2d", b.option(bool, "demo-2d", "Run the M1 SDL 2D input demo") orelse false);
 
     const core = b.addModule("zigsdl3demo", .{
         .root_source_file = b.path("src/root.zig"),
@@ -39,13 +41,15 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    exe.root_module.addOptions("build_options", options);
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);
     run.step.dependOn(b.getInstallStep());
-    b.step("run", "Run the SDL3 demo").dependOn(&run.step);
+    b.step("run", "Run the SDL3 GPU demo").dependOn(&run.step);
 
     const test_step = b.step("test", "Run core, SDL platform, and demo tests");
+    test_step.dependOn(&exe.step);
     for ([_]*std.Build.Module{ core, platform, exe.root_module }) |module| {
         const tests = b.addTest(.{ .root_module = module });
         test_step.dependOn(&b.addRunArtifact(tests).step);
