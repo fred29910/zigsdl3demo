@@ -196,7 +196,10 @@ test "reused entities reject stale component operations" {
     var registry = Registry.init(std.testing.allocator);
     defer registry.deinit();
     const old = try registry.create();
-    try registry.add(old, MeshRenderer{ .mesh = .cube });
+    try registry.add(old, MeshRenderer{
+        .mesh = .{ .index = 0, .generation = 1 },
+        .material = .{ .index = 0, .generation = 1 },
+    });
     try registry.destroy(old);
     const fresh = try registry.create();
     try std.testing.expectEqual(old.index, fresh.index);

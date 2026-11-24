@@ -1,15 +1,16 @@
 const std = @import("std");
 const scene = @import("../scene/registry.zig");
 const resources = @import("../scene/mesh_renderer.zig");
+const handles = @import("../assets/handle.zig");
 const transform = @import("../scene/transform.zig");
 const Matrix = transform.Matrix;
 
 pub const RenderItem = struct {
     entity: scene.Entity,
-    mesh: resources.MeshId,
-    material: resources.MaterialId,
+    mesh: handles.MeshHandle,
+    material: handles.MaterialHandle,
     model: Matrix,
-    sort_key: u64,
+    sort_key: u128,
 
     fn lessThan(_: void, a: RenderItem, b: RenderItem) bool {
         return a.sort_key < b.sort_key;
@@ -36,15 +37,13 @@ pub const RenderQueue = struct {
         var drawables = try registry.drawables();
         while (drawables.next()) |drawable| {
             const mesh_renderer = drawable.mesh_renderer;
-            // Group opaque draws by material, then mesh, breaking ties by index.
-            const material: u16 = @backingInt(mesh_renderer.material);
-            const mesh: u16 = @backingInt(mesh_renderer.mesh);
+            // Group opaque draws by material, then mesh. Slot iteration breaks ties.
             try self.items.append(self.allocator, .{
                 .entity = drawable.entity,
                 .mesh = mesh_renderer.mesh,
                 .material = mesh_renderer.material,
                 .model = drawable.world,
-                .sort_key = (@as(u64, material) << 48) | (@as(u64, mesh) << 32) | drawable.entity.index,
+                .sort_key = (@as(u128, mesh_renderer.material.index) << 64) | mesh_renderer.mesh.index,
             });
         }
         std.mem.sort(RenderItem, self.items.items, {}, RenderItem.lessThan);
@@ -61,14 +60,17 @@ test "collects only complete drawables and rebuilds after registry edits" {
     const cube = try registry.create();
     const child = try registry.create();
     const hidden = try registry.create();
-    try registry.add(triangle, resources.MeshRenderer{ .mesh = .triangle });
+    const material: handles.MaterialHandle = .{ .index = 0, .generation = 1 };
+    const cube_mesh: handles.MeshHandle = .{ .index = 0, .generation = 1 };
+    const triangle_mesh: handles.MeshHandle = .{ .index = 1, .generation = 1 };
+    try registry.add(triangle, resources.MeshRenderer{ .mesh = triangle_mesh, .material = material });
     try registry.add(triangle, transform.Transform{});
-    try registry.add(cube, resources.MeshRenderer{ .mesh = .cube });
+    try registry.add(cube, resources.MeshRenderer{ .mesh = cube_mesh, .material = material });
     try registry.add(cube, transform.Transform{ .position = .{ 5, 0, 0 } });
-    try registry.add(child, resources.MeshRenderer{ .mesh = .cube });
+    try registry.add(child, resources.MeshRenderer{ .mesh = cube_mesh, .material = material });
     try registry.add(child, transform.Transform{ .position = .{ 3, 0, 0 } });
     try registry.setParent(child, cube);
-    try registry.add(hidden, resources.MeshRenderer{ .mesh = .cube });
+    try registry.add(hidden, resources.MeshRenderer{ .mesh = cube_mesh, .material = material });
 
     const items = try queue.collect(&registry);
     try std.testing.expectEqual(@as(usize, 3), items.len);

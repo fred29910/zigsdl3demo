@@ -11,7 +11,15 @@ const show_scene = !demo_2d and !options.clear_only;
 
 const log = Logger.init(.info);
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const model_path: ?[]const u8 = if (show_scene) path: {
+        const args = try init.minimal.args.toSlice(init.arena.allocator());
+        if (args.len > 2) {
+            log.log(.error_, "demo", "用法: zigsdl3demo [scene.glb|scene.gltf]", .{});
+            return error.InvalidArguments;
+        }
+        break :path if (args.len == 2) args[1] else null;
+    } else null;
     platform.init() catch |err| {
         log.log(.error_, "sdl", "初始化失败: {s}", .{sdl.lastErrorText()});
         return err;
@@ -37,7 +45,7 @@ pub fn main() !void {
     else
         try GpuRenderer.init(window);
     defer renderer.deinit();
-    var scene = if (show_scene) DemoScene.init(renderer, std.heap.page_allocator) catch |err| {
+    var scene = if (show_scene) DemoScene.init(renderer, init.gpa, init.io, model_path) catch |err| {
         log.log(.error_, "scene", "初始化失败 ({s}): {s}", .{ @errorName(err), sdl.lastErrorText() });
         return err;
     } else {};
@@ -154,6 +162,10 @@ pub fn main() !void {
 test {
     _ = @import("engine/renderer/camera.zig");
     _ = @import("engine/renderer/render_queue.zig");
+    if (show_scene) {
+        _ = @import("engine/assets/gltf.zig");
+        _ = @import("engine/renderer/lighting.zig");
+    }
 }
 
 fn setCapture(input: *platform.InputState, captured: bool) void {

@@ -14,12 +14,17 @@ struct VertexInput
 {
     [[vk::location(0)]] float3 position : POSITION;
     [[vk::location(1)]] float2 uv : TEXCOORD0;
+    [[vk::location(2)]] float3 normal : TEXCOORD1;
+    [[vk::location(3)]] float4 tangent : TEXCOORD2;
 };
 
 struct VertexOutput
 {
     float4 position : SV_Position;
     float2 uv : TEXCOORD0;
+    float3 world : TEXCOORD1;
+    float3 normal : TEXCOORD2;
+    float4 tangent : TEXCOORD3;
 };
 
 VertexOutput main(VertexInput input)
@@ -32,5 +37,17 @@ VertexOutput main(VertexInput input)
     VertexOutput output;
     output.position = float4(view.xy * projection.xy, view.z * projection.z + projection.w, view.z);
     output.uv = input.uv;
+    output.world = world;
+
+    // Cofactors produce the inverse-transpose up to a scalar. The determinant
+    // sign restores the normal direction for mirrored node transforms.
+    float3 cofactor0 = cross(model_row1.xyz, model_row2.xyz);
+    float3 cofactor1 = cross(model_row2.xyz, model_row0.xyz);
+    float3 cofactor2 = cross(model_row0.xyz, model_row1.xyz);
+    float orientation = dot(model_row0.xyz, cofactor0) < 0 ? -1.0 : 1.0;
+    output.normal = orientation * float3(dot(cofactor0, input.normal), dot(cofactor1, input.normal), dot(cofactor2, input.normal));
+    output.tangent = float4(dot(model_row0.xyz, input.tangent.xyz),
+                            dot(model_row1.xyz, input.tangent.xyz),
+                            dot(model_row2.xyz, input.tangent.xyz), input.tangent.w * orientation);
     return output;
 }

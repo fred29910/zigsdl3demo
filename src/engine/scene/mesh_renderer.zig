@@ -1,8 +1,6 @@
-// Built-in demo resources. Asset-backed handles are introduced in M5.
-pub const MeshId = enum { cube, triangle };
-pub const MaterialId = enum { checker };
+const handles = @import("../assets/handle.zig");
 
 pub const MeshRenderer = struct {
-    mesh: MeshId,
-    material: MaterialId = .checker,
+    mesh: handles.MeshHandle,
+    material: handles.MaterialHandle,
 };

@@ -8,19 +8,21 @@ const Camera = @import("camera.zig").Camera;
 const RenderQueue = @import("render_queue.zig").RenderQueue;
 const RenderItem = @import("render_queue.zig").RenderItem;
 const scene = @import("../scene/registry.zig");
-const resources = @import("../scene/mesh_renderer.zig");
+const Instance = @import("../scene/model_instance.zig").Instance;
 const transform = @import("../scene/transform.zig");
+const assets = @import("../assets/asset_manager.zig");
+const lighting = @import("lighting.zig");
+const Vertex = @import("../assets/gltf.zig").Vertex;
 
 const gpu = sdl.gpu;
 const raw = sdl.raw;
 const log = Logger.init(.info);
-const texture_size = 32;
 const depth_usage: gpu.TextureUsage = .{ .depth_stencil_target = true };
 
 extern fn demo_imgui_init(window: *raw.SDL_Window, device: *raw.SDL_GPUDevice) bool;
 extern fn demo_imgui_shutdown() void;
 extern fn demo_imgui_event(event: *const raw.SDL_Event) void;
-extern fn demo_imgui_prepare(commands: *raw.SDL_GPUCommandBuffer, ms: f32, captured: bool, speed: *f32, draw_count: usize) void;
+extern fn demo_imgui_prepare(commands: *raw.SDL_GPUCommandBuffer, ms: f32, captured: bool, speed: ?*f32, draw_count: usize) void;
 extern fn demo_imgui_draw(commands: *raw.SDL_GPUCommandBuffer, pass: *raw.SDL_GPURenderPass) void;
 
 const DrawUniforms = extern struct {
@@ -28,16 +30,38 @@ const DrawUniforms = extern struct {
     model: transform.Matrix,
 };
 
+const ShadowUniforms = extern struct {
+    model: transform.Matrix,
+    projection: transform.Matrix,
+};
+
+const SkyUniforms = extern struct {
+    camera: Camera.Uniforms,
+    flags: [4]f32,
+};
+
+const Pass = enum { lit, shadow, sky };
+
+const MaterialUniforms = extern struct {
+    base_color: [4]f32,
+    flags: [4]f32,
+    surface: [4]f32,
+};
+
 pub const DemoScene = struct {
     registry: scene.Registry,
     queue: RenderQueue,
-    spinning_cube: scene.Entity,
+    assets: assets.AssetManager,
+    model: assets.ModelHandle,
+    instance: Instance,
+    spinning_cube: ?scene.Entity,
+    spin_base: transform.Matrix,
     device: *gpu.Device,
     pipeline: *gpu.GraphicsPipeline,
-    vertices: *gpu.Buffer,
-    indices: *gpu.Buffer,
-    texture: *gpu.Texture,
-    sampler: *gpu.Sampler,
+    shadow_pipeline: *gpu.GraphicsPipeline,
+    sky_pipeline: *gpu.GraphicsPipeline,
+    environment: lighting.Environment,
+    encode_srgb: f32,
     depth_format: gpu.TextureFormat,
     depth: ?*gpu.Texture = null,
     depth_extent: GpuRenderer.Extent = .{ .width = 0, .height = 0 },
@@ -45,19 +69,22 @@ pub const DemoScene = struct {
     rotation: f32 = 0.45,
     rotation_speed: f32 = 0.85,
 
-    pub fn init(renderer: GpuRenderer, allocator: std.mem.Allocator) !DemoScene {
+    pub fn init(renderer: GpuRenderer, allocator: std.mem.Allocator, io: std.Io, path: ?[]const u8) !DemoScene {
+        var manager = try assets.AssetManager.init(allocator, renderer.device);
+        errdefer manager.deinit();
+        const model = loadSceneAsset(&manager, io, path) catch |err| {
+            log.log(.error_, "assets", "加载 {s} 失败: {s}", .{ path orelse "demo.glb", @errorName(err) });
+            return err;
+        };
+        // Retaining the same source a second time exercises the cache without duplicating GPU resources.
+        const cached = try loadSceneAsset(&manager, io, path);
+        try manager.releaseModel(cached);
         var registry = scene.Registry.init(allocator);
         errdefer registry.deinit();
-        const cube = try registry.create();
-        try registry.add(cube, transform.Transform{});
-        try registry.add(cube, resources.MeshRenderer{ .mesh = .cube });
-        const child = try registry.create();
-        try registry.add(child, transform.Transform{ .position = .{ 2.2, 0, 0 }, .scale = @splat(0.32) });
-        try registry.add(child, resources.MeshRenderer{ .mesh = .cube });
-        try registry.setParent(child, cube);
-        const triangle = try registry.create();
-        try registry.add(triangle, transform.Transform{ .position = .{ -1.6, -0.35, 1.2 } });
-        try registry.add(triangle, resources.MeshRenderer{ .mesh = .triangle });
+        var instance = try Instance.init(&registry, &manager, model);
+        errdefer instance.deinit(&registry);
+        const spinning = if (path == null) instance.first_root else null;
+        const spin_base = if (spinning) |entity| registry.get(entity, transform.Transform).?.matrix() else (transform.Transform{}).matrix();
 
         const device = renderer.device;
         const depth_format: gpu.TextureFormat = if (device.supportsTextureFormat(.d32_float, .two_d, depth_usage))
@@ -66,34 +93,37 @@ pub const DemoScene = struct {
             .d16_unorm
         else
             return error.NoDepthFormat;
-        const pipeline = try createPipeline(device, device.swapchainTextureFormat(renderer.window), depth_format);
+        const color_format = device.swapchainTextureFormat(renderer.window);
+        const environment = try lighting.Environment.init(device);
+        errdefer environment.deinit(device);
+        const pipeline = try createPipeline(.lit, device, color_format, depth_format);
         errdefer device.releaseGraphicsPipeline(pipeline);
-        const vertices = try device.createBuffer(.{ .usage = .{ .vertex = true }, .size = @sizeOf(@TypeOf(mesh_vertices)) });
-        errdefer device.releaseBuffer(vertices);
-        const indices = try device.createBuffer(.{ .usage = .{ .index = true }, .size = @sizeOf(@TypeOf(mesh_indices)) });
-        errdefer device.releaseBuffer(indices);
-        const texture = try device.createTexture(.{
-            .format = .r8g8b8a8_unorm,
-            .usage = .{ .sampler = true },
-            .width = texture_size,
-            .height = texture_size,
-        });
-        errdefer device.releaseTexture(texture);
-        const sampler = try device.createSampler(.nearest_clamp);
-        errdefer device.releaseSampler(sampler);
-        try upload(device, vertices, indices, texture);
+        const shadow_pipeline = try createPipeline(.shadow, device, color_format, environment.shadow_format);
+        errdefer device.releaseGraphicsPipeline(shadow_pipeline);
+        const sky_pipeline = try createPipeline(.sky, device, color_format, depth_format);
+        errdefer device.releaseGraphicsPipeline(sky_pipeline);
         if (!demo_imgui_init(renderer.window.handle, @ptrCast(device))) return error.ImGuiInit;
-        log.log(.info, "scene", "场景已就绪：父子立方体和索引三角形，深度格式 {s}", .{@tagName(depth_format)});
+        log.log(.info, "scene", "导入场景已就绪，实体 {d}，深度格式 {s}，阴影图 {d}x{d} {s}", .{
+            instance.entities.items.len, @tagName(depth_format),              lighting.shadow_size,
+            lighting.shadow_size,        @tagName(environment.shadow_format),
+        });
         return .{
             .registry = registry,
             .queue = RenderQueue.init(allocator),
-            .spinning_cube = cube,
+            .assets = manager,
+            .model = model,
+            .instance = instance,
+            .spinning_cube = spinning,
+            .spin_base = spin_base,
             .device = device,
             .pipeline = pipeline,
-            .vertices = vertices,
-            .indices = indices,
-            .texture = texture,
-            .sampler = sampler,
+            .shadow_pipeline = shadow_pipeline,
+            .sky_pipeline = sky_pipeline,
+            .environment = environment,
+            .encode_srgb = switch (color_format) {
+                .r8g8b8a8_unorm_srgb, .b8g8r8a8_unorm_srgb => 0,
+                else => 1,
+            },
             .depth_format = depth_format,
         };
     }
@@ -104,13 +134,15 @@ pub const DemoScene = struct {
         };
         demo_imgui_shutdown();
         if (self.depth) |depth| self.device.releaseTexture(depth);
-        self.device.releaseSampler(self.sampler);
-        self.device.releaseTexture(self.texture);
-        self.device.releaseBuffer(self.indices);
-        self.device.releaseBuffer(self.vertices);
+        self.device.releaseGraphicsPipeline(self.sky_pipeline);
+        self.device.releaseGraphicsPipeline(self.shadow_pipeline);
         self.device.releaseGraphicsPipeline(self.pipeline);
+        self.environment.deinit(self.device);
         self.queue.deinit();
+        self.instance.deinit(&self.registry);
         self.registry.deinit();
+        self.assets.releaseModel(self.model) catch unreachable;
+        self.assets.deinit();
     }
 
     pub fn processEvent(event: *const raw.SDL_Event) void {
@@ -121,12 +153,13 @@ pub const DemoScene = struct {
         const step = @min(dt, 0.05);
         const captured = input.mouseCaptured();
         if (captured) self.camera.update(input, step);
-        self.rotation = @mod(self.rotation + step * self.rotation_speed, 200.0 * std.math.pi);
-        const yaw = transform.Rotation.axisAngle(.{ 0, 1, 0 }, self.rotation);
-        const tilt = transform.Rotation.axisAngle(.{ 1, 0, 0 }, self.rotation * 0.73);
-        var local = self.registry.get(self.spinning_cube, transform.Transform).?;
-        local.rotation = tilt.mul(yaw);
-        try self.registry.add(self.spinning_cube, local);
+        if (self.spinning_cube) |entity| {
+            self.rotation = @mod(self.rotation + step * self.rotation_speed, 200.0 * std.math.pi);
+            const yaw = transform.Rotation.axisAngle(.{ 0, 1, 0 }, self.rotation);
+            const tilt = transform.Rotation.axisAngle(.{ 1, 0, 0 }, self.rotation * 0.73);
+            const rotation = (transform.Transform{ .rotation = tilt.mul(yaw) }).matrix();
+            try self.registry.add(entity, transform.Transform{ .local_matrix = self.spin_base.mul(rotation) });
+        }
         // Finish CPU work, including allocation, before acquiring a swapchain texture.
         const items = try self.queue.collect(&self.registry);
 
@@ -142,40 +175,101 @@ pub const DemoScene = struct {
 
     fn record(self: *DemoScene, frame: GpuRenderer.Frame, items: []const RenderItem, frame_ms: f32, captured: bool) !void {
         const depth = try self.depthTarget(frame.extent);
-        demo_imgui_prepare(@ptrCast(frame.commands), frame_ms, captured, &self.rotation_speed, items.len);
+        demo_imgui_prepare(@ptrCast(frame.commands), frame_ms, captured, if (self.spinning_cube != null) &self.rotation_speed else null, items.len);
+        const projection = lighting.shadowProjection(&self.assets, items);
+        const shadow = try frame.commands.beginRenderPass(&.{}, &.{
+            .texture = self.environment.shadow,
+            .load_op = .clear,
+            .clear_depth = 1,
+            .store_op = .store,
+            .stencil_load_op = .dont_care,
+            .stencil_store_op = .dont_care,
+            .cycle = true,
+        });
+        shadow.bindGraphicsPipeline(self.shadow_pipeline);
+        self.drawMeshes(.shadow, frame.commands, shadow, items, projection);
+        shadow.end();
+
         const pass = try frame.commands.beginRenderPass(&.{frame.colorTarget(.clear)}, &.{
             .texture = depth,
             .load_op = .clear,
             .clear_depth = 1,
             .store_op = .dont_care,
             .stencil_load_op = .dont_care,
+            .stencil_store_op = .dont_care,
             .cycle = true,
         });
         const aspect = @as(f32, @floatFromInt(frame.extent.width)) / @as(f32, @floatFromInt(frame.extent.height));
         pass.bindGraphicsPipeline(self.pipeline);
-        pass.bindVertexBuffers(0, &.{.{ .buffer = self.vertices }});
-        pass.bindIndexBuffer(.{ .buffer = self.indices }, .u16);
         const camera = self.camera.uniforms(aspect);
-        var bound_material: ?resources.MaterialId = null;
-        for (items) |item| {
-            if (bound_material != item.material) {
-                switch (item.material) {
-                    .checker => pass.bindFragmentSamplers(0, &.{.{ .texture = self.texture, .sampler = self.sampler }}),
-                }
-                bound_material = item.material;
-            }
-            const first_index, const index_count = switch (item.mesh) {
-                .cube => .{ @as(u32, 0), cube_index_count },
-                .triangle => .{ cube_index_count, @as(u32, 3) },
-            };
-            frame.commands.pushVertexUniform(0, DrawUniforms{ .camera = camera, .model = item.model });
-            pass.drawIndexedPrimitives(index_count, 1, first_index, 0, 0);
-        }
+        frame.commands.pushFragmentUniform(1, lighting.Uniforms{ .eye = camera.eye, .projection = projection });
+        pass.bindFragmentSamplers(2, &.{.{
+            .texture = self.environment.shadow,
+            .sampler = self.environment.shadow_sampler,
+        }});
+        self.drawMeshes(.lit, frame.commands, pass, items, camera);
+
+        pass.bindGraphicsPipeline(self.sky_pipeline);
+        pass.bindFragmentSamplers(0, &.{.{ .texture = self.environment.sky, .sampler = self.environment.sky_sampler }});
+        frame.commands.pushVertexUniform(0, SkyUniforms{ .camera = camera, .flags = .{ self.encode_srgb, 0, 0, 0 } });
+        pass.drawPrimitives(3, 1, 0, 0);
         pass.end();
 
         const overlay = try frame.commands.beginRenderPass(&.{frame.colorTarget(.load)}, null);
         demo_imgui_draw(@ptrCast(frame.commands), @ptrCast(overlay));
         overlay.end();
+    }
+
+    fn drawMeshes(
+        self: *DemoScene,
+        comptime kind: Pass,
+        commands: *gpu.CommandBuffer,
+        pass: *gpu.RenderPass,
+        items: []const RenderItem,
+        view: if (kind == .shadow) transform.Matrix else Camera.Uniforms,
+    ) void {
+        var bound_material: ?assets.MaterialHandle = null;
+        var bound_mesh: ?assets.MeshHandle = null;
+        for (items) |item| {
+            const mesh = self.assets.mesh(item.mesh) orelse continue;
+            if (bound_material == null or !std.meta.eql(bound_material.?, item.material)) {
+                const material = self.assets.material(item.material) orelse continue;
+                const texture = if (material.base_color_texture) |handle| self.assets.texture(handle) orelse continue else self.assets.white;
+                const base: gpu.TextureSamplerBinding = .{ .texture = texture.image, .sampler = texture.sampler };
+                const normal = if (material.normal_texture) |handle| self.assets.texture(handle) else null;
+                if (kind == .shadow) {
+                    pass.bindFragmentSamplers(0, &.{base});
+                } else {
+                    const normal_binding = normal orelse self.assets.white;
+                    pass.bindFragmentSamplers(0, &.{
+                        base,
+                        .{ .texture = normal_binding.image, .sampler = normal_binding.sampler },
+                    });
+                }
+                commands.pushFragmentUniform(0, MaterialUniforms{
+                    .base_color = material.base_color,
+                    .flags = .{
+                        material.alpha_cutoff orelse -1,
+                        self.encode_srgb,
+                        @floatFromInt(@intFromBool(normal != null)),
+                        @floatFromInt(@intFromBool(material.unlit)),
+                    },
+                    .surface = .{ material.normal_scale, material.roughness, 0, 0 },
+                });
+                bound_material = item.material;
+            }
+            if (bound_mesh == null or !std.meta.eql(bound_mesh.?, item.mesh)) {
+                pass.bindVertexBuffers(0, &.{.{ .buffer = mesh.vertices }});
+                pass.bindIndexBuffer(.{ .buffer = mesh.indices }, .u32);
+                bound_mesh = item.mesh;
+            }
+            if (kind == .shadow) {
+                commands.pushVertexUniform(0, ShadowUniforms{ .model = item.model, .projection = view });
+            } else {
+                commands.pushVertexUniform(0, DrawUniforms{ .camera = view, .model = item.model });
+            }
+            pass.drawIndexedPrimitives(mesh.index_count, 1, 0, 0, 0);
+        }
     }
 
     fn depthTarget(self: *DemoScene, extent: GpuRenderer.Extent) !*gpu.Texture {
@@ -195,10 +289,21 @@ pub const DemoScene = struct {
     }
 };
 
-fn createPipeline(device: *gpu.Device, color: gpu.TextureFormat, depth: gpu.TextureFormat) !*gpu.GraphicsPipeline {
+fn loadSceneAsset(manager: *assets.AssetManager, io: std.Io, path: ?[]const u8) !assets.ModelHandle {
+    if (path) |file| return manager.loadFile(io, file);
+    const bytes align(4) = @embedFile("demo.glb").*;
+    return manager.loadEmbedded(io, "demo.glb", &bytes);
+}
+
+fn createPipeline(comptime kind: Pass, device: *gpu.Device, color: gpu.TextureFormat, depth: gpu.TextureFormat) !*gpu.GraphicsPipeline {
+    const name = switch (kind) {
+        .lit => "demo",
+        .shadow => "shadow",
+        .sky => "sky",
+    };
     // SDL's Vulkan backend expects SPIR-V bytes aligned for uint32_t.
-    const vertex_code align(4) = @embedFile("demo.vert.spv").*;
-    const fragment_code align(4) = @embedFile("demo.frag.spv").*;
+    const vertex_code align(4) = @embedFile(name ++ ".vert.spv").*;
+    const fragment_code align(4) = @embedFile(name ++ ".frag.spv").*;
     const vertex = try device.createShader(.{
         .code = &vertex_code,
         .code_size = vertex_code.len,
@@ -214,107 +319,39 @@ fn createPipeline(device: *gpu.Device, color: gpu.TextureFormat, depth: gpu.Text
         .entrypoint = "main",
         .format = .{ .spirv = true },
         .stage = .fragment,
-        .num_samplers = 1,
+        .num_samplers = if (kind == .lit) 3 else 1,
+        .num_uniform_buffers = switch (kind) {
+            .lit => 2,
+            .shadow => 1,
+            .sky => 0,
+        },
     });
     defer device.releaseShader(fragment);
     const targets = [_]gpu.ColorTargetDescription{.{ .format = color }};
+    const attributes = [_]gpu.VertexAttribute{
+        .{ .location = 0, .format = .float3, .offset = @offsetOf(Vertex, "position") },
+        .{ .location = 1, .format = .float2, .offset = @offsetOf(Vertex, "uv") },
+        .{ .location = 2, .format = .float3, .offset = @offsetOf(Vertex, "normal") },
+        .{ .location = 3, .format = .float4, .offset = @offsetOf(Vertex, "tangent") },
+    };
     return device.createGraphicsPipeline(.{
         .vertex_shader = vertex,
         .fragment_shader = fragment,
-        .vertex_input_state = .from(
+        .vertex_input_state = if (kind == .sky) .{} else .from(
             &.{.{ .pitch = @sizeOf(Vertex) }},
-            &.{
-                .{ .location = 0, .format = .float3, .offset = @offsetOf(Vertex, "position") },
-                .{ .location = 1, .format = .float2, .offset = @offsetOf(Vertex, "uv") },
-            },
+            if (kind == .lit) &attributes else attributes[0..2],
         ),
         .rasterizer_state = .{ .enable_depth_clip = true },
-        .depth_stencil_state = .{ .compare_op = .less, .enable_depth_test = true, .enable_depth_write = true },
+        .depth_stencil_state = .{
+            .compare_op = if (kind == .sky) .less_or_equal else .less,
+            .enable_depth_test = true,
+            .enable_depth_write = kind != .sky,
+        },
         .target_info = .{
-            .color_target_descriptions = &targets,
-            .num_color_targets = targets.len,
+            .color_target_descriptions = if (kind == .shadow) null else &targets,
+            .num_color_targets = if (kind == .shadow) 0 else targets.len,
             .has_depth_stencil_target = true,
             .depth_stencil_format = depth,
         },
     });
 }
-
-fn upload(device: *gpu.Device, vertices: *gpu.Buffer, indices: *gpu.Buffer, texture: *gpu.Texture) !void {
-    const vertex_bytes = std.mem.asBytes(&mesh_vertices);
-    const index_bytes = std.mem.asBytes(&mesh_indices);
-    const index_offset: u32 = @sizeOf(@TypeOf(mesh_vertices));
-    const texture_offset = std.mem.alignForward(u32, index_offset + @sizeOf(@TypeOf(mesh_indices)), 4);
-    const transfer_size = texture_offset + @as(u32, @sizeOf(@TypeOf(pixels)));
-    const transfer = try device.createTransferBuffer(.{ .size = transfer_size });
-    defer device.releaseTransferBuffer(transfer);
-    const memory = try device.mapTransferBuffer(transfer, transfer_size, false);
-    @memcpy(memory[0..vertex_bytes.len], vertex_bytes);
-    @memcpy(memory[index_offset..][0..index_bytes.len], index_bytes);
-    @memcpy(memory[texture_offset..], &pixels);
-    device.unmapTransferBuffer(transfer);
-
-    const commands = try device.acquireCommandBuffer();
-    const pass = commands.beginCopyPass() catch |err| {
-        log.log(.error_, "scene", "上传 Copy Pass 失败: {s}", .{sdl.lastErrorText()});
-        commands.cancel() catch {};
-        return err;
-    };
-    pass.uploadToBuffer(.{ .transfer_buffer = transfer }, .{ .buffer = vertices, .size = index_offset }, false);
-    pass.uploadToBuffer(
-        .{ .transfer_buffer = transfer, .offset = index_offset },
-        .{ .buffer = indices, .size = @sizeOf(@TypeOf(mesh_indices)) },
-        false,
-    );
-    pass.uploadToTexture(
-        .{ .transfer_buffer = transfer, .offset = texture_offset },
-        .{ .texture = texture, .w = texture_size, .h = texture_size },
-        false,
-    );
-    pass.end();
-    try commands.submit();
-}
-
-const Vertex = extern struct { position: [3]f32, uv: [2]f32 };
-
-fn face(a: [3]f32, b: [3]f32, c: [3]f32, d: [3]f32) [4]Vertex {
-    return .{
-        .{ .position = a, .uv = .{ 0, 1 } }, .{ .position = b, .uv = .{ 1, 1 } },
-        .{ .position = c, .uv = .{ 1, 0 } }, .{ .position = d, .uv = .{ 0, 0 } },
-    };
-}
-
-const mesh_vertices =
-    face(.{ -1, -1, -1 }, .{ 1, -1, -1 }, .{ 1, 1, -1 }, .{ -1, 1, -1 }) ++
-    face(.{ 1, -1, 1 }, .{ -1, -1, 1 }, .{ -1, 1, 1 }, .{ 1, 1, 1 }) ++
-    face(.{ -1, -1, 1 }, .{ -1, -1, -1 }, .{ -1, 1, -1 }, .{ -1, 1, 1 }) ++
-    face(.{ 1, -1, -1 }, .{ 1, -1, 1 }, .{ 1, 1, 1 }, .{ 1, 1, -1 }) ++
-    face(.{ -1, 1, -1 }, .{ 1, 1, -1 }, .{ 1, 1, 1 }, .{ -1, 1, 1 }) ++
-    face(.{ -1, -1, 1 }, .{ 1, -1, 1 }, .{ 1, -1, -1 }, .{ -1, -1, -1 }) ++
-    [_]Vertex{
-        .{ .position = .{ -0.85, -0.75, 0 }, .uv = .{ 0, 1 } },
-        .{ .position = .{ 0.85, -0.75, 0 }, .uv = .{ 1, 1 } },
-        .{ .position = .{ 0, 1, 0 }, .uv = .{ 0.5, 0 } },
-    };
-
-const cube_index_count: u32 = 36;
-const mesh_indices = [_]u16{
-    0,  1,  2,  0,  2,  3,  4,  5,  6,  4,  6,  7,
-    8,  9,  10, 8,  10, 11, 12, 13, 14, 12, 14, 15,
-    16, 17, 18, 16, 18, 19, 20, 21, 22, 20, 22, 23,
-    24, 25, 26,
-};
-
-const pixels: [texture_size * texture_size * 4]u8 = blk: {
-    @setEvalBranchQuota(4000);
-    var data: [texture_size * texture_size * 4]u8 = undefined;
-    for (0..texture_size) |y| {
-        for (0..texture_size) |x| {
-            const offset = (y * texture_size + x) * 4;
-            data[offset..][0..4].* = if ((x / 4 + y / 4) % 2 == 0)
-                .{ 241, 146, 59, 255 }
-            else
-                .{ 35, 92, 145, 255 };
-        }
-    }
-    break :blk data;
-};

@@ -30,8 +30,11 @@ pub const Transform = struct {
     position: Vec3 = .{ 0, 0, 0 },
     rotation: Rotation = .{},
     scale: Vec3 = .{ 1, 1, 1 },
+    /// Imported local affine matrix, when the asset supplies a matrix.
+    local_matrix: ?Matrix = null,
 
     pub fn matrix(self: Transform) Matrix {
+        if (self.local_matrix) |authored| return authored;
         const x, const y, const z, const w = .{ self.rotation.x, self.rotation.y, self.rotation.z, self.rotation.w };
         const sx, const sy, const sz = self.scale;
         const tx, const ty, const tz = self.position;

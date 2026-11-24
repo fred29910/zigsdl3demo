@@ -48,6 +48,7 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addOptions("build_options", options);
     configureShaders(b, exe.root_module);
     if (!demo_2d and !clear_only) {
+        configureAssets(b, exe.root_module);
         if (b.lazyDependency("imgui", .{})) |imgui| {
             const app = exe.root_module;
             app.link_libcpp = true;
@@ -68,6 +69,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);
+    run.addPassthruArgs();
     run.step.dependOn(b.getInstallStep());
     b.step("run", "Run the SDL3 GPU demo").dependOn(&run.step);
 
@@ -79,6 +81,25 @@ pub fn build(b: *std.Build) void {
     }
 }
 
+fn configureAssets(b: *std.Build, app: *std.Build.Module) void {
+    app.addAnonymousImport("demo.glb", .{ .root_source_file = b.path("assets/demo.glb") });
+    const cgltf = b.lazyDependency("cgltf", .{});
+    const stb = b.lazyDependency("stb", .{});
+    if (cgltf == null or stb == null) return;
+    const headers = b.addTranslateC(.{
+        .root_source_file = b.path("src/engine/assets/gltf_libraries.h"),
+        .target = app.resolved_target.?,
+        .optimize = app.optimize.?,
+        .link_libc = true,
+    });
+    headers.addIncludePath(cgltf.?.path(""));
+    headers.addIncludePath(stb.?.path(""));
+    app.addImport("gltf_c", headers.createModule());
+    app.addIncludePath(cgltf.?.path(""));
+    app.addIncludePath(stb.?.path(""));
+    app.addCSourceFile(.{ .file = b.path("src/engine/assets/gltf_libraries.c"), .flags = &.{} });
+}
+
 fn configureShaders(b: *std.Build, app: *std.Build.Module) void {
     const tool: ?[]const u8 = if (b.option([]const u8, "shadercross", "Path to SDL_shadercross for rebuilding embedded shaders")) |path|
         path
@@ -88,6 +109,10 @@ fn configureShaders(b: *std.Build, app: *std.Build.Module) void {
     const programs = .{
         .{ "demo.vert", "vertex" },
         .{ "demo.frag", "fragment" },
+        .{ "shadow.vert", "vertex" },
+        .{ "shadow.frag", "fragment" },
+        .{ "sky.vert", "vertex" },
+        .{ "sky.frag", "fragment" },
     };
     inline for (programs) |program| {
         const name, const stage = program;

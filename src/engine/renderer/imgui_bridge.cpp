@@ -48,8 +48,10 @@ extern "C" void demo_imgui_prepare(SDL_GPUCommandBuffer *commands, float ms, boo
         ImGui::Text("Opaque draws: %zu", draw_count);
         ImGui::TextUnformatted(captured ? "Tab: release mouse" : "Tab: capture mouse");
         ImGui::TextUnformatted("WASD: fly | Space / Ctrl: up / down");
-        ImGui::SetNextItemWidth(170);
-        ImGui::SliderFloat("Rotation", speed, 0.0f, 3.0f, "%.2f rad/s");
+        if (speed) {
+            ImGui::SetNextItemWidth(170);
+            ImGui::SliderFloat("Rotation", speed, 0.0f, 3.0f, "%.2f rad/s");
+        }
     }
     ImGui::End();
     ImGui::Render();
