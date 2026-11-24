@@ -13,12 +13,23 @@ pub fn main() !void {
     const window_width: i32 = 800;
     const window_height: i32 = 600;
 
-    const both = try sdl.createWindowAndRenderer("SDL3 Zig Demo", window_width, window_height, .{});
+    // WindowFlags.maximized 对应 SDL_WINDOW_MAXIMIZED（sdl3-zig/src/video.zig:251）。
+    // SDL3 源码中 SDL_MaximizeWindow 要求 SDL_WINDOW_RESIZABLE，否则直接返回 false
+    // （SDL_video.c:3508-3510），所以顺便把 resizable 打开。
+    const both = try sdl.createWindowAndRenderer("SDL3 Zig Demo", window_width, window_height, .{
+        .resizable = true,
+        .maximized = true,
+    });
     defer both.renderer.deinit();
     defer both.window.deinit();
 
     const window = both.window;
     const renderer = both.renderer;
+
+    // Window.maximize 是异步的：窗口管理器处理后窗口才变大
+    // （sdl3-zig/src/video.zig:354-356）。调 sync 等待确认，保证最大化生效。
+    try window.maximize();
+    try window.sync();
 
     std.debug.print("SDL3 Demo 启动成功!\n", .{});
     std.debug.print("窗口大小: {d}x{d}\n", .{ window_width, window_height });
