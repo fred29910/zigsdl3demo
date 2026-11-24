@@ -41,19 +41,13 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
-    const sdl_dep = b.dependency("sdl", .{
+    // 新的 SDL bindings 仓库：https://github.com/fred29910/sdl3-zig
+    // 它把 SDL 3 从源码构建为一个静态库并自己链接进 exe，
+    // 所以这里只需把模块导入到 exe 的 root module。
+    const sdl3_dep = b.dependency("sdl3", .{
         .target = target,
         .optimize = optimize,
-        //.preferred_linkage = .static,
-        //.strip = null,
-        //.sanitize_c = null,
-        //.pic = null,
-        //.lto = null,
-        //.emscripten_pthreads = false,
     });
-
-    const sdl_lib = sdl_dep.artifact("SDL3");
-    const sdl_test_lib = sdl_dep.artifact("SDL3_test");
 
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
@@ -93,15 +87,10 @@ pub fn build(b: *std.Build) void {
                 // can be extremely useful in case of collisions (which can happen
                 // importing modules from different packages).
                 .{ .name = "zigsdl3demo", .module = mod },
+                .{ .name = "sdl3", .module = sdl3_dep.module("sdl3") },
             },
         }),
     });
-
-    exe.linkLibrary(sdl_lib);
-    exe.linkLibrary(sdl_test_lib);
-
-    // 添加 SDL3 头文件搜索路径
-    exe.addIncludePath(sdl_dep.path("include"));
 
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default
@@ -131,9 +120,7 @@ pub fn build(b: *std.Build) void {
 
     // This allows the user to pass arguments to the application in the build
     // command itself, like this: `zig build run -- arg1 arg2 etc`
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    // Zig 0.17 中已移除 b.args，用户直接 `zig build run -- args` 即可传递参数。
 
     // Creates an executable that will run `test` blocks from the provided module.
     // Here `mod` needs to define a target, which is why earlier we made sure to
