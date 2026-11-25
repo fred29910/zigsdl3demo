@@ -47,8 +47,30 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.addOptions("build_options", options);
     configureShaders(b, exe.root_module);
+    const test_step = b.step("test", "Run core, SDL platform, and demo tests");
     if (!demo_2d and !clear_only) {
+        const physics_test = b.step("physics-test", "Exercise Jolt without a window or GPU");
+        if (b.lazyDependency("jolt", .{})) |jolt| {
+            const physics = configurePhysics(b, jolt, target, optimize);
+            exe.root_module.addImport("jolt_c", physics.bindings);
+            exe.root_module.linkLibrary(physics.library);
+            const tests = b.addTest(.{ .root_module = b.createModule(.{
+                .root_source_file = b.path("src/physics_test.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{.{ .name = "jolt_c", .module = physics.bindings }},
+            }) });
+            tests.root_module.linkLibrary(physics.library);
+            physics_test.dependOn(&b.addRunArtifact(tests).step);
+        }
+        test_step.dependOn(physics_test);
         configureAssets(b, exe.root_module);
+        if (b.lazyDependency("miniaudio", .{})) |miniaudio| {
+            const app = exe.root_module;
+            app.link_libc = true;
+            app.addIncludePath(miniaudio.path("miniaudio-0.11.26"));
+            app.addCSourceFile(.{ .file = b.path("src/engine/audio/miniaudio_bridge.c"), .flags = &.{"-std=c11"} });
+        }
         if (b.lazyDependency("imgui", .{})) |imgui| {
             const app = exe.root_module;
             app.link_libcpp = true;
@@ -73,12 +95,48 @@ pub fn build(b: *std.Build) void {
     run.step.dependOn(b.getInstallStep());
     b.step("run", "Run the SDL3 GPU demo").dependOn(&run.step);
 
-    const test_step = b.step("test", "Run core, SDL platform, and demo tests");
     test_step.dependOn(&exe.step);
     for ([_]*std.Build.Module{ core, platform, exe.root_module }) |module| {
         const tests = b.addTest(.{ .root_module = module });
         test_step.dependOn(&b.addRunArtifact(tests).step);
     }
+}
+
+fn configurePhysics(b: *std.Build, jolt: *std.Build.Dependency, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) struct {
+    library: *std.Build.Step.Compile,
+    bindings: *std.Build.Module,
+} {
+    // Use the upstream core source list, without the optional object stream.
+    b.dependOnFileContents(jolt.path("Jolt/Jolt.cmake"));
+    const cmake = jolt.builder.root.root_dir.handle.readFileAlloc(b.graph.io, "Jolt/Jolt.cmake", b.allocator, .limited(128 * 1024)) catch |err|
+        @panic(@errorName(err));
+    const marker = "set(JOLT_PHYSICS_SRC_FILES\n";
+    const start = (std.mem.indexOf(u8, cmake, marker) orelse @panic("Jolt source list missing")) + marker.len;
+    const end = std.mem.indexOfScalarPos(u8, cmake, start, ')') orelse @panic("Jolt source list is incomplete");
+    var files: std.ArrayList([]const u8) = .empty;
+    var tokens = std.mem.tokenizeAny(u8, cmake[start..end], " \t\r\n");
+    while (tokens.next()) |token| {
+        const prefix = "${JOLT_PHYSICS_ROOT}/";
+        if (std.mem.startsWith(u8, token, prefix) and std.mem.endsWith(u8, token, ".cpp")) {
+            files.append(b.allocator, token[prefix.len..]) catch @panic("out of memory");
+        }
+    }
+    if (files.items.len == 0) @panic("Jolt C++ source list is empty");
+    const module = b.createModule(.{ .target = target, .optimize = optimize, .link_libcpp = true });
+    module.addIncludePath(jolt.path(""));
+    const flags = &.{ "-std=c++17", "-fno-exceptions", "-fno-rtti", "-ffp-contract=off", "-fno-sanitize=undefined" };
+    module.addCSourceFiles(.{ .root = jolt.path("Jolt"), .files = files.items, .flags = flags });
+    module.addCSourceFile(.{ .file = b.path("src/engine/physics/jolt_bridge.cpp"), .flags = flags });
+    const headers = b.addTranslateC(.{
+        .root_source_file = b.path("src/engine/physics/jolt_bridge.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    return .{
+        .library = b.addLibrary(.{ .name = "jolt", .linkage = .static, .root_module = module }),
+        .bindings = headers.createModule(),
+    };
 }
 
 fn configureAssets(b: *std.Build, app: *std.Build.Module) void {

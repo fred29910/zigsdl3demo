@@ -12,6 +12,9 @@ const Instance = @import("../scene/model_instance.zig").Instance;
 const transform = @import("../scene/transform.zig");
 const assets = @import("../assets/asset_manager.zig");
 const lighting = @import("lighting.zig");
+const PhysicsDemo = @import("../physics/demo.zig").Demo;
+const Health = @import("../gameplay/health.zig").Health;
+const DemoAudio = @import("../audio/demo_audio.zig").DemoAudio;
 const Vertex = @import("../assets/gltf.zig").Vertex;
 
 const gpu = sdl.gpu;
@@ -19,10 +22,36 @@ const raw = sdl.raw;
 const log = Logger.init(.info);
 const depth_usage: gpu.TextureUsage = .{ .depth_stencil_target = true };
 
+fn moveAxis(positive: bool, negative: bool) f32 {
+    return @floatFromInt(@as(i2, @intFromBool(positive)) - @as(i2, @intFromBool(negative)));
+}
+
 extern fn demo_imgui_init(window: *raw.SDL_Window, device: *raw.SDL_GPUDevice) bool;
 extern fn demo_imgui_shutdown() void;
 extern fn demo_imgui_event(event: *const raw.SDL_Event) void;
-extern fn demo_imgui_prepare(commands: *raw.SDL_GPUCommandBuffer, ms: f32, captured: bool, speed: ?*f32, draw_count: usize) void;
+const TrainingStatus = extern struct {
+    rounds: u32,
+    capacity: u32,
+    player_hp: u32,
+    player_max_hp: u32,
+    target_hp: u32,
+    target_max_hp: u32,
+    reload_remaining: f32,
+    reload_duration: f32,
+    feedback: PhysicsDemo.Feedback,
+};
+extern fn demo_imgui_prepare(
+    commands: *raw.SDL_GPUCommandBuffer,
+    ms: f32,
+    captured: bool,
+    speed: ?*f32,
+    draw_count: usize,
+    body_count: usize,
+    physics_steps: u32,
+    ray_distance: f32,
+    grounded: bool,
+    status: ?*const TrainingStatus,
+) void;
 extern fn demo_imgui_draw(commands: *raw.SDL_GPUCommandBuffer, pass: *raw.SDL_GPURenderPass) void;
 
 const DrawUniforms = extern struct {
@@ -54,6 +83,8 @@ pub const DemoScene = struct {
     assets: assets.AssetManager,
     model: assets.ModelHandle,
     instance: Instance,
+    physics_demo: ?PhysicsDemo,
+    audio: ?*DemoAudio,
     spinning_cube: ?scene.Entity,
     spin_base: transform.Matrix,
     device: *gpu.Device,
@@ -84,7 +115,17 @@ pub const DemoScene = struct {
         var instance = try Instance.init(&registry, &manager, model);
         errdefer instance.deinit(&registry);
         const spinning = if (path == null) instance.first_root else null;
-        const spin_base = if (spinning) |entity| registry.get(entity, transform.Transform).?.matrix() else (transform.Transform{}).matrix();
+        var spin_base = if (spinning) |entity| registry.get(entity, transform.Transform).?.matrix() else (transform.Transform{}).matrix();
+        if (spinning != null) {
+            // Keep the animated display above the walkable training area.
+            spin_base.rows[1][3] += 2.2;
+            const triangle = instance.node_entities[1];
+            var display = registry.get(triangle, transform.Transform).?.matrix();
+            display.rows[1][3] += 2.4;
+            try registry.add(triangle, transform.Transform{ .local_matrix = display });
+        }
+        var physics_demo = if (path == null) try PhysicsDemo.init(&registry, manager.model(model).?, model, instance) else null;
+        errdefer if (physics_demo) |*physics| physics.deinit(&registry);
 
         const device = renderer.device;
         const depth_format: gpu.TextureFormat = if (device.supportsTextureFormat(.d32_float, .two_d, depth_usage))
@@ -103,6 +144,14 @@ pub const DemoScene = struct {
         const sky_pipeline = try createPipeline(.sky, device, color_format, depth_format);
         errdefer device.releaseGraphicsPipeline(sky_pipeline);
         if (!demo_imgui_init(renderer.window.handle, @ptrCast(device))) return error.ImGuiInit;
+        const audio = if (physics_demo != null) DemoAudio.init() else null;
+        if (physics_demo) |physics| {
+            log.log(.info, "physics", "Jolt 已就绪，{d} 个刚体，步长 1/60 秒", .{physics.world.bodyCount()});
+            if (audio != null)
+                log.log(.info, "audio", "miniaudio 播放已就绪", .{})
+            else
+                log.log(.warn, "audio", "音频初始化失败，以静音模式运行训练场", .{});
+        }
         log.log(.info, "scene", "导入场景已就绪，实体 {d}，深度格式 {s}，阴影图 {d}x{d} {s}", .{
             instance.entities.items.len, @tagName(depth_format),              lighting.shadow_size,
             lighting.shadow_size,        @tagName(environment.shadow_format),
@@ -113,6 +162,8 @@ pub const DemoScene = struct {
             .assets = manager,
             .model = model,
             .instance = instance,
+            .physics_demo = physics_demo,
+            .audio = audio,
             .spinning_cube = spinning,
             .spin_base = spin_base,
             .device = device,
@@ -129,6 +180,7 @@ pub const DemoScene = struct {
     }
 
     pub fn deinit(self: *DemoScene) void {
+        if (self.audio) |audio| audio.deinit();
         self.device.waitForIdle() catch {
             log.log(.warn, "scene", "等待 GPU 空闲失败: {s}", .{sdl.lastErrorText()});
         };
@@ -139,6 +191,7 @@ pub const DemoScene = struct {
         self.device.releaseGraphicsPipeline(self.pipeline);
         self.environment.deinit(self.device);
         self.queue.deinit();
+        if (self.physics_demo) |*physics| physics.deinit(&self.registry);
         self.instance.deinit(&self.registry);
         self.registry.deinit();
         self.assets.releaseModel(self.model) catch unreachable;
@@ -152,7 +205,7 @@ pub const DemoScene = struct {
     pub fn render(self: *DemoScene, renderer: GpuRenderer, input: *const InputState, dt: f32) !?GpuRenderer.Extent {
         const step = @min(dt, 0.05);
         const captured = input.mouseCaptured();
-        if (captured) self.camera.update(input, step);
+        if (captured) self.camera.look(input);
         if (self.spinning_cube) |entity| {
             self.rotation = @mod(self.rotation + step * self.rotation_speed, 200.0 * std.math.pi);
             const yaw = transform.Rotation.axisAngle(.{ 0, 1, 0 }, self.rotation);
@@ -160,6 +213,36 @@ pub const DemoScene = struct {
             const rotation = (transform.Transform{ .rotation = tilt.mul(yaw) }).matrix();
             try self.registry.add(entity, transform.Transform{ .local_matrix = self.spin_base.mul(rotation) });
         }
+        if (self.physics_demo) |*physics| {
+            try physics.world.setCharacterInput(if (captured) .{
+                .strafe = moveAxis(input.isDown(.move_right), input.isDown(.move_left)),
+                .forward = moveAxis(input.isDown(.move_forward), input.isDown(.move_back)),
+                .yaw = self.camera.yaw,
+                .sprint = input.isDown(.sprint),
+                .jump_pressed = input.pressed(.jump),
+            } else null);
+            physics.steps = try physics.world.advanceScene(&self.registry, dt);
+            self.camera.position = @as(@Vector(3, f32), physics.world.characterState().?.feet) + @Vector(3, f32){ 0, PhysicsDemo.eye_height, 0 };
+            if (try physics.updateWeapon(
+                &self.registry,
+                @min(dt, 0.1),
+                captured and (input.isDown(.fire) or input.pressed(.fire)),
+                captured and input.pressed(.reload),
+                self.camera.position,
+                self.camera.direction(),
+            )) |shot| {
+                if (self.audio) |audio| audio.playShot(shot.hit != null);
+                if (shot.hit) |hit| {
+                    log.log(.info, "physics", "射线命中 {s} 刚体 {d}，实体 {any}，距离 {d:.2}，位置 {any}，法线 {any}", .{
+                        @tagName(hit.layer), @backingInt(hit.body), hit.entity, hit.distance, hit.position, hit.normal,
+                    });
+                } else log.log(.info, "physics", "射线未命中", .{});
+                if (shot.damage) |damage| {
+                    log.log(.info, "weapon", "造成伤害 {d}，剩余生命 {d}", .{ damage.applied, damage.remaining });
+                }
+                log.log(.info, "weapon", "弹匣 {d}/{d}", .{ physics.weapon.rounds, physics.weapon.data.magazine_size });
+            }
+        } else if (captured) self.camera.fly(input, step);
         // Finish CPU work, including allocation, before acquiring a swapchain texture.
         const items = try self.queue.collect(&self.registry);
 
@@ -175,7 +258,34 @@ pub const DemoScene = struct {
 
     fn record(self: *DemoScene, frame: GpuRenderer.Frame, items: []const RenderItem, frame_ms: f32, captured: bool) !void {
         const depth = try self.depthTarget(frame.extent);
-        demo_imgui_prepare(@ptrCast(frame.commands), frame_ms, captured, if (self.spinning_cube != null) &self.rotation_speed else null, items.len);
+        const physics = if (self.physics_demo) |*value| value else null;
+        const status: ?TrainingStatus = if (physics) |demo| blk: {
+            const player = self.registry.get(demo.player, Health).?;
+            const target = self.registry.get(demo.target, Health).?;
+            break :blk .{
+                .rounds = demo.weapon.rounds,
+                .capacity = demo.weapon.data.magazine_size,
+                .player_hp = player.current,
+                .player_max_hp = player.maximum,
+                .target_hp = target.current,
+                .target_max_hp = target.maximum,
+                .reload_remaining = if (demo.weapon.state == .reloading) demo.weapon.remaining else 0,
+                .reload_duration = demo.weapon.data.reload_seconds,
+                .feedback = demo.feedback,
+            };
+        } else null;
+        demo_imgui_prepare(
+            @ptrCast(frame.commands),
+            frame_ms,
+            captured,
+            if (self.spinning_cube != null) &self.rotation_speed else null,
+            items.len,
+            if (physics) |demo| demo.world.bodyCount() else 0,
+            if (physics) |demo| demo.steps else 0,
+            if (physics) |demo| if (demo.ray) |hit| hit.distance else -1 else -1,
+            if (physics) |demo| demo.world.characterState().?.grounded else false,
+            if (status) |*hud| hud else null,
+        );
         const projection = lighting.shadowProjection(&self.assets, items);
         const shadow = try frame.commands.beginRenderPass(&.{}, &.{
             .texture = self.environment.shadow,

@@ -70,6 +70,8 @@ pub fn main(init: std.process.Init) !void {
 
     if (demo_2d)
         log.log(.info, "demo", "WASD 移动，左键触发动作，Tab 捕获或释放鼠标，Esc 退出", .{})
+    else if (show_scene and model_path == null)
+        log.log(.info, "demo", "Tab 捕获鼠标，WASD 移动，左 Shift 冲刺，空格跳跃，左键开火，R 换弹，Esc 退出", .{})
     else if (show_scene)
         log.log(.info, "demo", "Tab 捕获鼠标，WASD/空格/Ctrl 飞行，Esc 退出", .{})
     else

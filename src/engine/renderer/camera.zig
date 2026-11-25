@@ -29,10 +29,13 @@ pub const Camera = struct {
         };
     }
 
-    pub fn update(self: *Camera, input: *const InputState, dt: f32) void {
+    pub fn look(self: *Camera, input: *const InputState) void {
         const delta = input.mouseDelta();
-        self.yaw += delta.x * 0.0025;
+        self.yaw = @mod(self.yaw + delta.x * 0.0025, 2.0 * std.math.pi);
         self.pitch = std.math.clamp(self.pitch - delta.y * 0.0025, -1.55, 1.55);
+    }
+
+    pub fn fly(self: *Camera, input: *const InputState, dt: f32) void {
         const axes = self.basis();
         var movement: Vec3 = @splat(0);
         if (input.isDown(.move_forward)) movement += axes.forward;
@@ -46,6 +49,10 @@ pub const Camera = struct {
             const speed: f32 = if (input.isDown(.sprint)) 7 else 3;
             self.position += movement * @as(Vec3, @splat(speed * dt / magnitude));
         }
+    }
+
+    pub fn direction(self: Camera) [3]f32 {
+        return self.basis().forward;
     }
 
     pub fn uniforms(self: Camera, aspect: f32) Uniforms {

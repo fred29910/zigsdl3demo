@@ -32,6 +32,11 @@
     // Once all dependencies are fetched, `zig build` no longer requires
     // internet connectivity.
     .dependencies = .{
+        .jolt = .{
+            .url = "https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.5.0.tar.gz",
+            .hash = "N-V-__8AAAPKDAINa53XiVzIJ2I4V3AAjPxzQ_bJ9TD7TOOS",
+            .lazy = true,
+        },
         .cgltf = .{
             .url = "https://github.com/jkuhlmann/cgltf/archive/refs/tags/v1.15.tar.gz",
             .hash = "N-V-__8AAKFjBABZzn84N4iiLQyNQSMVsv5XBJSvZTPcQL2H",
@@ -45,6 +50,11 @@
         .imgui = .{
             .url = "https://github.com/ocornut/imgui/archive/refs/tags/v1.92.5.tar.gz",
             .hash = "N-V-__8AALp9cwA8tEuEno2YCZyivsMaobnF-Z7qZGY3qBOt",
+            .lazy = true,
+        },
+        .miniaudio = .{
+            .url = "https://github.com/mackron/miniaudio/archive/refs/tags/0.11.26.tar.gz",
+            .hash = "N-V-__8AAOYywgDjFH2rxtvPz3D1RS7WRGMqfpncZjJW-jIl",
             .lazy = true,
         },
         .sdl3 = .{

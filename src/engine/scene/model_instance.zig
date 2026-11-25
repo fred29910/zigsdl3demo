@@ -9,14 +9,14 @@ const handles = @import("../assets/handle.zig");
 /// Registry entities for one placement of a cached model. The caller retains the model.
 pub const Instance = struct {
     entities: std.ArrayList(Entity) = .empty,
+    node_entities: []Entity,
     first_root: ?Entity = null,
 
     pub fn init(registry: *Registry, manager: *const assets.AssetManager, handle: handles.ModelHandle) !Instance {
         const model = manager.model(handle) orelse return error.InvalidModelHandle;
         const allocator = registry.allocator;
         const node_entities = try allocator.alloc(Entity, model.nodes.len);
-        defer allocator.free(node_entities);
-        var instance: Instance = .{};
+        var instance: Instance = .{ .node_entities = node_entities };
         errdefer instance.deinit(registry);
         for (model.nodes, node_entities) |node, *entry| {
             const entity = try instance.create(registry);
@@ -46,6 +46,7 @@ pub const Instance = struct {
     pub fn deinit(self: *Instance, registry: *Registry) void {
         while (self.entities.pop()) |entity| registry.destroy(entity) catch {};
         self.entities.deinit(registry.allocator);
+        registry.allocator.free(self.node_entities);
         self.* = undefined;
     }
 

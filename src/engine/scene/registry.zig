@@ -1,6 +1,7 @@
 const std = @import("std");
 const transform = @import("transform.zig");
 const MeshRenderer = @import("mesh_renderer.zig").MeshRenderer;
+const Health = @import("../gameplay/health.zig").Health;
 const Transform = transform.Transform;
 const Matrix = transform.Matrix;
 
@@ -9,7 +10,7 @@ pub const Entity = struct {
     generation: u32,
 };
 
-/// Slot-based storage for the engine's first two component types.
+/// Slot-based storage for scene components.
 pub const Registry = struct {
     allocator: std.mem.Allocator,
     slots: std.ArrayList(Slot) = .empty,
@@ -23,6 +24,7 @@ pub const Registry = struct {
         next_free: ?u32 = null,
         transform: ?Transform = null,
         mesh_renderer: ?MeshRenderer = null,
+        health: ?Health = null,
         parent: ?Entity = null,
         world: Matrix = undefined,
         dirty: bool = true,
@@ -31,6 +33,7 @@ pub const Registry = struct {
             return switch (T) {
                 Transform => &self.transform,
                 MeshRenderer => &self.mesh_renderer,
+                Health => &self.health,
                 else => @compileError("unsupported scene component"),
             };
         }
@@ -69,6 +72,7 @@ pub const Registry = struct {
         try self.remove(entity, Transform);
         const slot = &self.slots.items[entity.index];
         slot.mesh_renderer = null;
+        slot.health = null;
         slot.alive = false;
         // Retire an exhausted slot so an old handle can never become live again.
         if (slot.generation < std.math.maxInt(u32)) {
@@ -93,6 +97,11 @@ pub const Registry = struct {
 
     pub fn has(self: *const Registry, entity: Entity, comptime T: type) bool {
         return self.get(entity, T) != null;
+    }
+
+    pub fn getParent(self: *const Registry, entity: Entity) ?Entity {
+        if (!self.isAlive(entity)) return null;
+        return self.slots.items[entity.index].parent;
     }
 
     /// Removing a Transform detaches its direct children, preserving their local transforms.
