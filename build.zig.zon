@@ -33,8 +33,8 @@
     // internet connectivity.
     .dependencies = .{
         .jolt = .{
-            .url = "https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.5.0.tar.gz",
-            .hash = "N-V-__8AAAPKDAINa53XiVzIJ2I4V3AAjPxzQ_bJ9TD7TOOS",
+            .url = "https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.7.0.tar.gz",
+            .hash = "N-V-__8AAJgyLAKn0VQnc3MlGUbJ7hXrEJNoZ4uxMLtBWrxJ",
             .lazy = true,
         },
         .cgltf = .{

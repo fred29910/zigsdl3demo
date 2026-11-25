@@ -70,9 +70,9 @@ zig build test -Dclear-only=true
 在全部升级完成且本地缓存清理后，断开网络执行构建：
 
 ```sh
-zig build --fetch   # 联网预热（如环境允许）
-# 清理 zig-pkg 后断网执行
-zig build
+zig build --fetch=all   # 联网预热全部依赖（含 lazy 依赖）
+# 使用全新的临时缓存目录模拟干净环境；不要删除仓库内的 zig-pkg/、zig-out/、.zig-cache/
+ZIG_GLOBAL_CACHE_DIR=/tmp/opencode/zig-clean-cache zig build --cache-dir /tmp/opencode/zig-clean-local-cache
 ```
 
 预期：构建成功，证明锁定 URL 与哈希在干净环境可复现。失败则定位依赖并回退，直到通过。
