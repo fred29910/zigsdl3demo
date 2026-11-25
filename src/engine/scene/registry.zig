@@ -67,6 +67,12 @@ pub const Registry = struct {
         return slot.alive and slot.generation == entity.generation;
     }
 
+    pub fn entityCount(self: *const Registry) usize {
+        var count: usize = 0;
+        for (self.slots.items) |slot| count += @intFromBool(slot.alive);
+        return count;
+    }
+
     pub fn destroy(self: *Registry, entity: Entity) error{InvalidEntity}!void {
         if (!self.isAlive(entity)) return error.InvalidEntity;
         try self.remove(entity, Transform);

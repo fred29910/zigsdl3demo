@@ -35,6 +35,7 @@ pub const BodyDesc = struct {
     pose: Pose = .{},
     velocity: Vec3 = @splat(0),
     angular_velocity: Vec3 = @splat(0),
+    kinematic: bool = false,
 };
 
 pub const BodyState = struct {
@@ -88,6 +89,7 @@ pub const World = struct {
     const Entry = struct {
         native_id: u32,
         layer: Layer,
+        kinematic: bool,
         entity: ?scene.Entity = null,
     };
 
@@ -143,6 +145,9 @@ pub const World = struct {
 
     /// Mesh data is only borrowed for this call. Jolt owns the cooked shape.
     pub fn createBody(self: *World, desc: BodyDesc) !BodyId {
+        if (desc.kinematic and (desc.layer != .dynamic or
+            !std.meta.eql(desc.velocity, @as(Vec3, @splat(0))) or
+            !std.meta.eql(desc.angular_velocity, @as(Vec3, @splat(0))))) return error.InvalidKinematicBody;
         if (!finite(desc.pose.position) or !finite(desc.velocity) or !finite(desc.angular_velocity))
             return error.InvalidBodyState;
         const q = desc.pose.rotation;
@@ -166,6 +171,7 @@ pub const World = struct {
             .indices = null,
             .vertex_count = 0,
             .index_count = 0,
+            .kinematic = desc.kinematic,
         };
         switch (desc.collider) {
             .box => |half| {
@@ -207,7 +213,7 @@ pub const World = struct {
         if (!native.physics_body_create(self.handle, &settings, &native_id)) return error.BodyCreationFailed;
         const id: BodyId = @fromBackingInt(@intCast(self.next_id));
         self.next_id += 1;
-        self.bodies.putAssumeCapacityNoClobber(id, .{ .native_id = native_id, .layer = desc.layer });
+        self.bodies.putAssumeCapacityNoClobber(id, .{ .native_id = native_id, .layer = desc.layer, .kinematic = desc.kinematic });
         return id;
     }
 
@@ -218,6 +224,19 @@ pub const World = struct {
 
     pub fn bodyState(self: *const World, id: BodyId) !BodyState {
         return self.readState(self.bodies.get(id) orelse return error.InvalidBody);
+    }
+
+    /// Move a gameplay-driven collider and its bound visual root together.
+    pub fn setKinematicPosition(self: *World, registry: *scene.Registry, id: BodyId, position: Vec3) !void {
+        const entry = self.bodies.get(id) orelse return error.InvalidBody;
+        if (!entry.kinematic or !finite(position)) return error.InvalidKinematicPosition;
+        if (entry.entity) |entity| {
+            if (!canBind(registry, entity, entry.layer)) return error.InvalidBodyEntity;
+            var local = registry.get(entity, transform.Transform).?;
+            local.position = position;
+            try registry.add(entity, local);
+        }
+        native.physics_body_set_position(self.handle, entry.native_id, pack(position));
     }
 
     /// All bindings in a world belong to the same registry. Dynamic bodies are
@@ -265,7 +284,7 @@ pub const World = struct {
         }
         const steps = try self.advance(dt);
         for (self.bodies.values()) |entry| {
-            if (entry.layer != .dynamic) continue;
+            if (entry.layer != .dynamic or entry.kinematic) continue;
             const entity = entry.entity orelse continue;
             const pose = self.readState(entry).pose;
             var local = registry.get(entity, transform.Transform).?;
@@ -280,6 +299,10 @@ pub const World = struct {
     /// direction can be any nonzero vector. Returns the closest hit within
     /// max_distance in world units, filtered by object layer.
     pub fn raycast(self: *const World, origin: Vec3, direction: Vec3, max_distance: f32, layers: Layers) !?RayHit {
+        return self.raycastIgnoring(origin, direction, max_distance, layers, null);
+    }
+
+    pub fn raycastIgnoring(self: *const World, origin: Vec3, direction: Vec3, max_distance: f32, layers: Layers, ignore: ?BodyId) !?RayHit {
         if (!finite(origin) or !finite(direction) or !validExtent(max_distance)) return error.InvalidRay;
         const magnitude = @max(@abs(direction[0]), @abs(direction[1]), @abs(direction[2]));
         if (magnitude == 0) return error.InvalidRay;
@@ -290,7 +313,8 @@ pub const World = struct {
         if (!finite(end)) return error.InvalidRay;
 
         var hit: native.PhysicsRayHit = undefined;
-        if (!native.physics_raycast(self.handle, pack(origin), pack(displacement), @bitCast(layers), &hit))
+        const ignored = if (ignore) |body| (self.bodies.get(body) orelse return error.InvalidBody).native_id else std.math.maxInt(u32);
+        if (!native.physics_raycast(self.handle, pack(origin), pack(displacement), @bitCast(layers), ignored, &hit))
             return null;
         const id: BodyId = @fromBackingInt(@intCast(hit.user_data));
         const entry = self.bodies.get(id) orelse return error.UnmappedPhysicsBody;

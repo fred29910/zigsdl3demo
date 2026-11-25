@@ -31,6 +31,7 @@ typedef struct PhysicsBodyDesc {
     const PhysicsVec3 *vertices;
     const uint32_t *indices;
     size_t vertex_count, index_count;
+    bool kinematic;
 } PhysicsBodyDesc;
 
 typedef struct PhysicsBodyState {
@@ -58,8 +59,9 @@ uint32_t physics_world_step(PhysicsWorld *world, float dt);
 bool physics_body_create(PhysicsWorld *world, const PhysicsBodyDesc *desc, uint32_t *id);
 void physics_body_destroy(PhysicsWorld *world, uint32_t id);
 void physics_body_state(const PhysicsWorld *world, uint32_t id, PhysicsBodyState *state);
+void physics_body_set_position(PhysicsWorld *world, uint32_t id, PhysicsVec3 position);
 bool physics_raycast(const PhysicsWorld *world, PhysicsVec3 origin, PhysicsVec3 displacement,
-                     uint32_t layer_mask, PhysicsRayHit *hit);
+                     uint32_t layer_mask, uint32_t ignore_id, PhysicsRayHit *hit);
 bool physics_character_create(PhysicsWorld *world, PhysicsVec3 feet, float radius, float half_height);
 void physics_character_step(PhysicsWorld *world, float dt, float vx, float vz, bool jump);
 PhysicsCharacterState physics_character_state(const PhysicsWorld *world);

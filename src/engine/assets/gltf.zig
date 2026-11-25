@@ -17,6 +17,7 @@ pub const Primitive = struct {
 };
 pub const Range = struct { first: u32 = 0, count: u32 = 0 };
 pub const Node = struct {
+    name: []const u8,
     parent: ?usize,
     local: Matrix,
     primitives: Range,
@@ -164,7 +165,12 @@ pub fn load(allocator: std.mem.Allocator, io: std.Io, source: Source) !Model {
         for (matrix) |component| if (!std.math.isFinite(component)) return error.InvalidNodeMatrix;
         if (matrix[3] != 0 or matrix[7] != 0 or matrix[11] != 0 or matrix[15] != 1)
             return error.InvalidNodeMatrix;
-        try nodes.append(a, .{ .parent = visit.parent, .local = fromGltfMatrix(matrix), .primitives = range });
+        try nodes.append(a, .{
+            .name = if (node.name) |name| try a.dupe(u8, std.mem.span(name)) else "",
+            .parent = visit.parent,
+            .local = fromGltfMatrix(matrix),
+            .primitives = range,
+        });
         for (items(node.children, node.children_count)) |child| {
             try visits.append(temp, .{ .node = child, .parent = cursor });
         }

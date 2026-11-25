@@ -11,9 +11,11 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const demo_2d = b.option(bool, "demo-2d", "Run the M1 SDL 2D input demo") orelse false;
     const clear_only = b.option(bool, "clear-only", "Run the M2 Vulkan clear demo") orelse false;
+    const tracy = b.option([]const u8, "tracy-source", "Enable local profiling with a Tracy v0.12.2 source checkout");
     const options = b.addOptions();
     options.addOption(bool, "demo_2d", demo_2d);
     options.addOption(bool, "clear_only", clear_only);
+    options.addOption(bool, "tracy", tracy != null and !demo_2d and !clear_only);
 
     const core = b.addModule("zigsdl3demo", .{
         .root_source_file = b.path("src/root.zig"),
@@ -49,6 +51,14 @@ pub fn build(b: *std.Build) void {
     configureShaders(b, exe.root_module);
     const test_step = b.step("test", "Run core, SDL platform, and demo tests");
     if (!demo_2d and !clear_only) {
+        if (tracy) |path| {
+            const client: std.Build.LazyPath = .{ .cwd_relative = b.pathJoin(&.{ path, "public", "TracyClient.cpp" }) };
+            exe.root_module.link_libcpp = true;
+            exe.root_module.addCSourceFile(.{ .file = client, .flags = &.{
+                "-std=c++17",           "-DTRACY_ENABLE",            "-DTRACY_ON_DEMAND",   "-DTRACY_ONLY_LOCALHOST",
+                "-DTRACY_NO_BROADCAST", "-DTRACY_NO_SYSTEM_TRACING", "-DTRACY_NO_SAMPLING",
+            } });
+        }
         const physics_test = b.step("physics-test", "Exercise Jolt without a window or GPU");
         if (b.lazyDependency("jolt", .{})) |jolt| {
             const physics = configurePhysics(b, jolt, target, optimize);
@@ -141,6 +151,7 @@ fn configurePhysics(b: *std.Build, jolt: *std.Build.Dependency, target: std.Buil
 
 fn configureAssets(b: *std.Build, app: *std.Build.Module) void {
     app.addAnonymousImport("demo.glb", .{ .root_source_file = b.path("assets/demo.glb") });
+    app.addAnonymousImport("range.glb", .{ .root_source_file = b.path("assets/range.glb") });
     const cgltf = b.lazyDependency("cgltf", .{});
     const stb = b.lazyDependency("stb", .{});
     if (cgltf == null or stb == null) return;

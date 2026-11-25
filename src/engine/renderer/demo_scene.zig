@@ -13,6 +13,10 @@ const transform = @import("../scene/transform.zig");
 const assets = @import("../assets/asset_manager.zig");
 const lighting = @import("lighting.zig");
 const PhysicsDemo = @import("../physics/demo.zig").Demo;
+const RangeLayout = @import("../physics/range_layout.zig").Layout;
+const Enemy = @import("../gameplay/enemy.zig").Enemy;
+const MeshRenderer = @import("../scene/mesh_renderer.zig").MeshRenderer;
+const profiler = @import("../profiler.zig");
 const Health = @import("../gameplay/health.zig").Health;
 const DemoAudio = @import("../audio/demo_audio.zig").DemoAudio;
 const Vertex = @import("../assets/gltf.zig").Vertex;
@@ -39,6 +43,9 @@ const TrainingStatus = extern struct {
     reload_remaining: f32,
     reload_duration: f32,
     feedback: PhysicsDemo.Feedback,
+    phase: PhysicsDemo.Phase,
+    enemy_state: Enemy.State,
+    enemy_hp: u32,
 };
 extern fn demo_imgui_prepare(
     commands: *raw.SDL_GPUCommandBuffer,
@@ -46,6 +53,7 @@ extern fn demo_imgui_prepare(
     captured: bool,
     speed: ?*f32,
     draw_count: usize,
+    entity_count: usize,
     body_count: usize,
     physics_steps: u32,
     ray_distance: f32,
@@ -77,13 +85,37 @@ const MaterialUniforms = extern struct {
     surface: [4]f32,
 };
 
+const Training = struct {
+    model: assets.ModelHandle,
+    instance: Instance,
+    layout: RangeLayout,
+    demo: PhysicsDemo,
+
+    fn init(manager: *assets.AssetManager, registry: *scene.Registry, io: std.Io, display: assets.ModelHandle) !Training {
+        const bytes = @embedFile("range.glb").*;
+        const model = try manager.loadEmbedded(io, "range.glb", &bytes);
+        errdefer manager.releaseModel(model) catch unreachable;
+        var instance = try Instance.init(registry, manager, model);
+        errdefer instance.deinit(registry);
+        const layout = try RangeLayout.init(registry, manager.model(model).?, instance.node_entities);
+        const demo = try PhysicsDemo.init(registry, manager.model(display).?, display, &layout);
+        return .{ .model = model, .instance = instance, .layout = layout, .demo = demo };
+    }
+
+    fn deinit(self: *Training, manager: *assets.AssetManager, registry: *scene.Registry) void {
+        self.demo.deinit(registry);
+        self.instance.deinit(registry);
+        manager.releaseModel(self.model) catch unreachable;
+    }
+};
+
 pub const DemoScene = struct {
     registry: scene.Registry,
     queue: RenderQueue,
     assets: assets.AssetManager,
     model: assets.ModelHandle,
     instance: Instance,
-    physics_demo: ?PhysicsDemo,
+    training: ?Training,
     audio: ?*DemoAudio,
     spinning_cube: ?scene.Entity,
     spin_base: transform.Matrix,
@@ -123,9 +155,11 @@ pub const DemoScene = struct {
             var display = registry.get(triangle, transform.Transform).?.matrix();
             display.rows[1][3] += 2.4;
             try registry.add(triangle, transform.Transform{ .local_matrix = display });
+            // The authored range supplies its own floor. Keep the old quad in the model viewer.
+            try registry.remove(instance.node_entities[2], MeshRenderer);
         }
-        var physics_demo = if (path == null) try PhysicsDemo.init(&registry, manager.model(model).?, model, instance) else null;
-        errdefer if (physics_demo) |*physics| physics.deinit(&registry);
+        var training = if (path == null) try Training.init(&manager, &registry, io, model) else null;
+        errdefer if (training) |*range| range.deinit(&manager, &registry);
 
         const device = renderer.device;
         const depth_format: gpu.TextureFormat = if (device.supportsTextureFormat(.d32_float, .two_d, depth_usage))
@@ -144,17 +178,17 @@ pub const DemoScene = struct {
         const sky_pipeline = try createPipeline(.sky, device, color_format, depth_format);
         errdefer device.releaseGraphicsPipeline(sky_pipeline);
         if (!demo_imgui_init(renderer.window.handle, @ptrCast(device))) return error.ImGuiInit;
-        const audio = if (physics_demo != null) DemoAudio.init() else null;
-        if (physics_demo) |physics| {
-            log.log(.info, "physics", "Jolt 已就绪，{d} 个刚体，步长 1/60 秒", .{physics.world.bodyCount()});
+        const audio = if (training != null) DemoAudio.init() else null;
+        if (training) |*range| {
+            log.log(.info, "physics", "Jolt 已就绪，{d} 个刚体，步长 1/60 秒", .{range.demo.world.bodyCount()});
             if (audio != null)
                 log.log(.info, "audio", "miniaudio 播放已就绪", .{})
             else
                 log.log(.warn, "audio", "音频初始化失败，以静音模式运行训练场", .{});
         }
         log.log(.info, "scene", "导入场景已就绪，实体 {d}，深度格式 {s}，阴影图 {d}x{d} {s}", .{
-            instance.entities.items.len, @tagName(depth_format),              lighting.shadow_size,
-            lighting.shadow_size,        @tagName(environment.shadow_format),
+            registry.entityCount(), @tagName(depth_format),              lighting.shadow_size,
+            lighting.shadow_size,   @tagName(environment.shadow_format),
         });
         return .{
             .registry = registry,
@@ -162,7 +196,7 @@ pub const DemoScene = struct {
             .assets = manager,
             .model = model,
             .instance = instance,
-            .physics_demo = physics_demo,
+            .training = training,
             .audio = audio,
             .spinning_cube = spinning,
             .spin_base = spin_base,
@@ -191,7 +225,7 @@ pub const DemoScene = struct {
         self.device.releaseGraphicsPipeline(self.pipeline);
         self.environment.deinit(self.device);
         self.queue.deinit();
-        if (self.physics_demo) |*physics| physics.deinit(&self.registry);
+        if (self.training) |*range| range.deinit(&self.assets, &self.registry);
         self.instance.deinit(&self.registry);
         self.registry.deinit();
         self.assets.releaseModel(self.model) catch unreachable;
@@ -203,9 +237,10 @@ pub const DemoScene = struct {
     }
 
     pub fn render(self: *DemoScene, renderer: GpuRenderer, input: *const InputState, dt: f32) !?GpuRenderer.Extent {
+        const frame_zone = profiler.begin("Scene frame", @src());
+        defer profiler.end(frame_zone);
         const step = @min(dt, 0.05);
         const captured = input.mouseCaptured();
-        if (captured) self.camera.look(input);
         if (self.spinning_cube) |entity| {
             self.rotation = @mod(self.rotation + step * self.rotation_speed, 200.0 * std.math.pi);
             const yaw = transform.Rotation.axisAngle(.{ 0, 1, 0 }, self.rotation);
@@ -213,21 +248,75 @@ pub const DemoScene = struct {
             const rotation = (transform.Transform{ .rotation = tilt.mul(yaw) }).matrix();
             try self.registry.add(entity, transform.Transform{ .local_matrix = self.spin_base.mul(rotation) });
         }
-        if (self.physics_demo) |*physics| {
-            try physics.world.setCharacterInput(if (captured) .{
+        if (self.training) |*range| {
+            try self.updateTraining(range, input, dt, captured);
+        } else if (captured) {
+            self.camera.look(input);
+            self.camera.fly(input, step);
+        }
+        // Finish CPU work, including allocation, before acquiring a swapchain texture.
+        const items = blk: {
+            const zone = profiler.begin("Render queue", @src());
+            defer profiler.end(zone);
+            break :blk try self.queue.collect(&self.registry);
+        };
+
+        const frame = blk: {
+            const zone = profiler.begin("Acquire swapchain", @src());
+            defer profiler.end(zone);
+            break :blk (try renderer.acquireFrame()) orelse return null;
+        };
+        self.record(frame, items, dt * 1000, captured) catch |err| {
+            log.log(.error_, "scene", "录制场景命令失败: {s}", .{sdl.lastErrorText()});
+            frame.submit() catch {};
+            return err;
+        };
+        {
+            const zone = profiler.begin("Submit frame", @src());
+            defer profiler.end(zone);
+            try frame.submit();
+        }
+        profiler.frame();
+        return frame.extent;
+    }
+
+    fn updateTraining(self: *DemoScene, range: *Training, input: *const InputState, dt: f32, captured: bool) !void {
+        const zone = profiler.begin("Training update", @src());
+        defer profiler.end(zone);
+        const physics = &range.demo;
+        physics.steps = 0;
+        if (physics.phase != .playing) {
+            if (input.pressed(.interact)) {
+                // Build the replacement before releasing the finished round.
+                const fresh = try PhysicsDemo.init(&self.registry, self.assets.model(self.model).?, self.model, &range.layout);
+                physics.deinit(&self.registry);
+                physics.* = fresh;
+                self.camera = .{};
+                self.rotation = 0.45;
+                log.log(.info, "training", "回合重开，{d} 个刚体，弹匣 {d}，生命 100，实体 {d}", .{
+                    physics.world.bodyCount(), physics.weapon.rounds, self.registry.entityCount(),
+                });
+            }
+        } else if (captured) {
+            self.camera.look(input);
+            try physics.world.setCharacterInput(.{
                 .strafe = moveAxis(input.isDown(.move_right), input.isDown(.move_left)),
                 .forward = moveAxis(input.isDown(.move_forward), input.isDown(.move_back)),
                 .yaw = self.camera.yaw,
                 .sprint = input.isDown(.sprint),
                 .jump_pressed = input.pressed(.jump),
-            } else null);
-            physics.steps = try physics.world.advanceScene(&self.registry, dt);
-            self.camera.position = @as(@Vector(3, f32), physics.world.characterState().?.feet) + @Vector(3, f32){ 0, PhysicsDemo.eye_height, 0 };
+            });
+            {
+                const step_zone = profiler.begin("Jolt simulation", @src());
+                defer profiler.end(step_zone);
+                physics.steps = try physics.world.advanceScene(&self.registry, dt);
+            }
+            self.updateEye(physics);
             if (try physics.updateWeapon(
                 &self.registry,
                 @min(dt, 0.1),
-                captured and (input.isDown(.fire) or input.pressed(.fire)),
-                captured and input.pressed(.reload),
+                input.isDown(.fire) or input.pressed(.fire),
+                input.pressed(.reload),
                 self.camera.position,
                 self.camera.direction(),
             )) |shot| {
@@ -242,26 +331,37 @@ pub const DemoScene = struct {
                 }
                 log.log(.info, "weapon", "弹匣 {d}/{d}", .{ physics.weapon.rounds, physics.weapon.data.magazine_size });
             }
-        } else if (captured) self.camera.fly(input, step);
-        // Finish CPU work, including allocation, before acquiring a swapchain texture.
-        const items = try self.queue.collect(&self.registry);
+            const previous = physics.enemy.state;
+            const damage = blk: {
+                const enemy_zone = profiler.begin("Robot and round", @src());
+                defer profiler.end(enemy_zone);
+                break :blk try physics.updateRound(&self.registry, &range.layout);
+            };
+            if (physics.enemy.state != previous)
+                log.log(.info, "training", "敌人状态 {s}", .{@tagName(physics.enemy.state)});
+            if (damage) |hit|
+                log.log(.info, "training", "玩家受到 {d} 点伤害，剩余生命 {d}", .{ hit.applied, hit.remaining });
+            if (physics.phase != .playing)
+                log.log(.info, "training", "回合结束 {s}，按 E 重开", .{@tagName(physics.phase)});
+            return;
+        } else {
+            try physics.world.setCharacterInput(null);
+        }
+        self.updateEye(physics);
+    }
 
-        const frame = (try renderer.acquireFrame()) orelse return null;
-        self.record(frame, items, dt * 1000, captured) catch |err| {
-            log.log(.error_, "scene", "录制场景命令失败: {s}", .{sdl.lastErrorText()});
-            frame.submit() catch {};
-            return err;
-        };
-        try frame.submit();
-        return frame.extent;
+    fn updateEye(self: *DemoScene, physics: *const PhysicsDemo) void {
+        self.camera.position = @as(@Vector(3, f32), physics.world.characterState().?.feet) + @Vector(3, f32){ 0, PhysicsDemo.eye_height, 0 };
     }
 
     fn record(self: *DemoScene, frame: GpuRenderer.Frame, items: []const RenderItem, frame_ms: f32, captured: bool) !void {
+        const zone = profiler.begin("Record render passes", @src());
+        defer profiler.end(zone);
         const depth = try self.depthTarget(frame.extent);
-        const physics = if (self.physics_demo) |*value| value else null;
+        const physics = if (self.training) |*range| &range.demo else null;
         const status: ?TrainingStatus = if (physics) |demo| blk: {
             const player = self.registry.get(demo.player, Health).?;
-            const target = self.registry.get(demo.target, Health).?;
+            const target = self.registry.get(demo.target.box.root, Health).?;
             break :blk .{
                 .rounds = demo.weapon.rounds,
                 .capacity = demo.weapon.data.magazine_size,
@@ -272,6 +372,9 @@ pub const DemoScene = struct {
                 .reload_remaining = if (demo.weapon.state == .reloading) demo.weapon.remaining else 0,
                 .reload_duration = demo.weapon.data.reload_seconds,
                 .feedback = demo.feedback,
+                .phase = demo.phase,
+                .enemy_state = demo.enemy.state,
+                .enemy_hp = if (demo.enemy_actor) |actor| self.registry.get(actor.box.root, Health).?.current else 0,
             };
         } else null;
         demo_imgui_prepare(
@@ -280,6 +383,7 @@ pub const DemoScene = struct {
             captured,
             if (self.spinning_cube != null) &self.rotation_speed else null,
             items.len,
+            self.registry.entityCount(),
             if (physics) |demo| demo.world.bodyCount() else 0,
             if (physics) |demo| demo.steps else 0,
             if (physics) |demo| if (demo.ray) |hit| hit.distance else -1 else -1,

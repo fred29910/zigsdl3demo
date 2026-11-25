@@ -5,6 +5,7 @@
 #include <Jolt/Core/JobSystemSingleThreaded.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayerInterfaceTable.h>
@@ -198,15 +199,17 @@ extern "C" bool physics_body_create(PhysicsWorld *world, const PhysicsBodyDesc *
     if (!shape.IsValid()) return false;
 
     const bool dynamic = desc->layer == PHYSICS_DYNAMIC;
+    const EMotionType motion = desc->kinematic ? EMotionType::Kinematic :
+        dynamic ? EMotionType::Dynamic : EMotionType::Static;
     const float *q = desc->pose.rotation;
     BodyCreationSettings settings(shape.Get(), vec(desc->pose.position), Quat(q[0], q[1], q[2], q[3]),
-                                  dynamic ? EMotionType::Dynamic : EMotionType::Static, desc->layer);
+                                  motion, desc->layer);
     settings.mLinearVelocity = vec(desc->velocity);
     settings.mAngularVelocity = vec(desc->angular_velocity);
-    settings.mMotionQuality = dynamic ? EMotionQuality::LinearCast : EMotionQuality::Discrete;
+    settings.mMotionQuality = motion == EMotionType::Dynamic ? EMotionQuality::LinearCast : EMotionQuality::Discrete;
     settings.mUserData = desc->user_data;
     const BodyID body = world->system.GetBodyInterface().CreateAndAddBody(
-        settings, dynamic ? EActivation::Activate : EActivation::DontActivate);
+        settings, motion == EMotionType::Dynamic ? EActivation::Activate : EActivation::DontActivate);
     if (body.IsInvalid()) return false;
     *id = body.GetIndexAndSequenceNumber();
     return true;
@@ -232,12 +235,18 @@ extern "C" void physics_body_state(const PhysicsWorld *world, uint32_t id, Physi
     state->active = bodies.IsActive(body);
 }
 
+extern "C" void physics_body_set_position(PhysicsWorld *world, uint32_t id, PhysicsVec3 position)
+{
+    world->system.GetBodyInterface().SetPosition(BodyID(id), vec(position), EActivation::DontActivate);
+}
+
 extern "C" bool physics_raycast(const PhysicsWorld *world, PhysicsVec3 origin, PhysicsVec3 displacement,
-                                uint32_t layer_mask, PhysicsRayHit *hit)
+                                uint32_t layer_mask, uint32_t ignore_id, PhysicsRayHit *hit)
 {
     const RRayCast ray(vec(origin), vec(displacement));
     RayCastResult result;
-    if (!world->system.GetNarrowPhaseQuery().CastRay(ray, result, {}, RayLayerFilter(layer_mask)))
+    if (!world->system.GetNarrowPhaseQuery().CastRay(ray, result, {}, RayLayerFilter(layer_mask),
+                                                    IgnoreSingleBodyFilter(BodyID(ignore_id))))
         return false;
 
     const BodyLockRead lock(world->system.GetBodyLockInterface(), result.mBodyID);

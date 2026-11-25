@@ -199,6 +199,7 @@ pub const AssetManager = struct {
         @memset(textures, null);
         const owned_key = try a.dupe(u8, key);
         const nodes = try a.dupe(gltf.Node, cpu.nodes);
+        for (nodes) |*node| node.name = try a.dupe(u8, node.name);
         var uploaded: usize = 0;
         errdefer for (meshes[0..uploaded]) |mesh_data| mesh_data.release(self.device);
         errdefer for (textures) |texture_data| if (texture_data) |t| t.release(self.device);

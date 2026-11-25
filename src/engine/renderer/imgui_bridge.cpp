@@ -47,6 +47,9 @@ struct TrainingStatus {
     float reload_remaining;
     float reload_duration;
     enum Feedback : uint32_t { None, Surface, Damage, Defeated } feedback;
+    enum Phase : uint32_t { Playing, Won, Lost } phase;
+    enum EnemyState : uint32_t { Patrol, Chase, Attack, Down } enemy_state;
+    uint32_t enemy_hp;
 };
 
 static void hud_panel(ImVec2 position, ImVec2 pivot)
@@ -92,8 +95,24 @@ static void draw_hud(const TrainingStatus &status, bool captured)
         ImGui::Text("%.0f FPS", ImGui::GetIO().Framerate);
     ImGui::End();
 
-    if (!captured)
+    if (status.phase != TrainingStatus::Playing || !captured) {
+        hud_panel(ImVec2(size.x * 0.5f, size.y * 0.5f), ImVec2(0.5f, 0.5f));
+        if (ImGui::Begin("##RoundStatus", nullptr, flags)) {
+            if (status.phase == TrainingStatus::Won) {
+                ImGui::TextUnformatted("Range cleared");
+                ImGui::TextUnformatted("E: try again");
+            } else if (status.phase == TrainingStatus::Lost) {
+                ImGui::TextUnformatted("Training failed");
+                ImGui::TextUnformatted("E: try again");
+            } else {
+                ImGui::TextUnformatted("FPS Training Range");
+                ImGui::TextUnformatted("Disable the blue target and orange robot");
+                ImGui::TextUnformatted("Tab: capture mouse and play");
+            }
+        }
+        ImGui::End();
         return;
+    }
     const ImVec2 center(size.x * 0.5f, size.y * 0.5f);
     ImDrawList *foreground = ImGui::GetForegroundDrawList();
     const ImVec2 left(center.x - 5, center.y), right(center.x + 5, center.y);
@@ -116,7 +135,7 @@ static void draw_hud(const TrainingStatus &status, bool captured)
 }
 
 extern "C" void demo_imgui_prepare(SDL_GPUCommandBuffer *commands, float ms, bool captured, float *speed, size_t draw_count,
-                                  size_t body_count, uint32_t physics_steps, float ray_distance, bool grounded,
+                                  size_t entity_count, size_t body_count, uint32_t physics_steps, float ray_distance, bool grounded,
                                   const TrainingStatus *status)
 {
     ImGui_ImplSDLGPU3_NewFrame();
@@ -128,7 +147,7 @@ extern "C" void demo_imgui_prepare(SDL_GPUCommandBuffer *commands, float ms, boo
             ImGui::Text("Frame: %.2f ms", ms);
         else
             ImGui::Text("Frame: %.2f ms  (%.0f FPS)", ms, ms > 0.0f ? 1000.0f / ms : 0.0f);
-        ImGui::Text("Opaque draws: %zu", draw_count);
+        ImGui::Text("Draws: %zu | Entities: %zu", draw_count, entity_count);
         ImGui::TextUnformatted(captured ? "Tab: release mouse" : "Tab: capture mouse");
         if (body_count) {
             ImGui::TextUnformatted("WASD: move | Shift: sprint | Space: jump");
@@ -139,10 +158,13 @@ extern "C" void demo_imgui_prepare(SDL_GPUCommandBuffer *commands, float ms, boo
         } else ImGui::TextUnformatted("WASD: fly | Space / Ctrl: up / down");
         if (status) {
             ImGui::TextUnformatted("Left mouse: fire | R: reload");
+            ImGui::Text("Objectives: %u / 2", unsigned(status->target_hp == 0) + unsigned(status->enemy_hp == 0));
             if (status->target_hp > 0)
                 ImGui::Text("Target: %u / %u HP", status->target_hp, status->target_max_hp);
             else
                 ImGui::TextUnformatted("Target down");
+            const char *states[] = {"Patrol", "Chase", "Attack", "Down"};
+            ImGui::Text("Robot: %s (%u HP)", states[status->enemy_state], status->enemy_hp);
         }
         if (speed) {
             ImGui::SetNextItemWidth(170);

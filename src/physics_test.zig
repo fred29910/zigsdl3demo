@@ -6,7 +6,60 @@ const Weapon = @import("engine/gameplay/weapon.zig").Weapon;
 const WeaponData = @import("engine/gameplay/weapon.zig").WeaponData;
 const Health = @import("engine/gameplay/health.zig").Health;
 const hitscan = @import("engine/gameplay/hitscan.zig");
+const Enemy = @import("engine/gameplay/enemy.zig").Enemy;
+const navigation = @import("engine/gameplay/waypoints.zig");
 const testing = std.testing;
+
+test {
+    _ = navigation;
+}
+
+test "enemy patrols, chases and only attacks after uninterrupted sight" {
+    var world = try physics.World.init(testing.allocator);
+    defer world.deinit();
+    var registry = scene.Registry.init(testing.allocator);
+    defer registry.deinit();
+    var enemy: Enemy = .{ .feet = .{ 0, 0, 0 } };
+    const body = try world.createBody(.{
+        .collider = .{ .box = Enemy.half },
+        .layer = .dynamic,
+        .kinematic = true,
+        .pose = .{ .position = enemy.center() },
+    });
+    const entity = try registry.create();
+    try registry.add(entity, Transform{ .position = enemy.center(), .scale = Enemy.half });
+    try world.bindEntity(body, &registry, entity);
+    const graph: navigation.Graph = .{
+        .points = @splat(.{ 20, 0, 20 }),
+        .blockers = .{
+            .init(.{ 30, 0, 30 }, @splat(1), 0.5),
+            .init(.{ -30, 0, -30 }, @splat(1), 0.5),
+        },
+    };
+    const patrol = &.{ .{ 0, 0, 0 }, .{ 0, 0, 2 } };
+    try testing.expect(!try enemy.update(&world, body, 0.1, .{ 0, 0, 15 }, &graph, patrol));
+    try testing.expectEqual(.patrol, enemy.state);
+    try testing.expect(enemy.feet[2] > 0);
+    try world.setKinematicPosition(&registry, body, enemy.center());
+    try testing.expectEqual(enemy.center(), (try world.bodyState(body)).pose.position);
+    try testing.expectEqual(enemy.center(), registry.get(entity, Transform).?.position);
+    try testing.expectEqual(Enemy.half, registry.get(entity, Transform).?.scale);
+    try testing.expect(!try enemy.update(&world, body, 0.1, .{ 0, 0, 4 }, &graph, patrol));
+    try testing.expectEqual(.chase, enemy.state);
+    const near = .{ 0, 0, 1.6 };
+    try testing.expect(!try enemy.update(&world, body, 0.3, near, &graph, patrol));
+    try testing.expectEqual(.attack, enemy.state);
+    const wall = try world.createBody(.{
+        .collider = .{ .box = .{ 1, 1, 0.04 } },
+        .pose = .{ .position = .{ 0, 1, 1 } },
+    });
+    try testing.expect(!try enemy.update(&world, body, 0.2, near, &graph, patrol));
+    try testing.expectEqual(.chase, enemy.state);
+    try world.destroyBody(wall);
+    try testing.expect(!try enemy.update(&world, body, 0.2, near, &graph, patrol));
+    try testing.expect(try enemy.update(&world, body, 0.26, near, &graph, patrol));
+    try testing.expect(!try enemy.update(&world, body, 0.2, near, &graph, patrol));
+}
 
 const test_weapon: WeaponData = .{
     .damage = 25,

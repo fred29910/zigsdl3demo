@@ -1,8 +1,8 @@
 # Zig SDL3 Demo
 
-用 Zig 和 SDL3 构建的第一人称训练场，也是 [FPS 框架开发计划](docs/Zig_SDL3_FPS_Framework_Plan.docx) 的可运行验证项目。默认场景包含可行走、冲刺和跳跃的胶囊角色、可射击的靶板、动态刚体、方向光阴影和天空盒。开火、命中与换弹状态通过 HUD、准星标记和音效反馈。工程还提供 glTF/GLB 查看器、SDL 2D 输入演示和 Vulkan 清屏模式。
+用 Zig 和 SDL3 构建的第一人称训练场，也是 [FPS 框架开发计划](docs/Zig_SDL3_FPS_Framework_Plan.docx) 的可运行验证项目。默认场景包含可冲刺和跳跃的胶囊角色、固定靶板和一个会巡逻、追击并攻击的训练机器人。玩家可以打完一局并在原窗口重开。工程还提供 glTF/GLB 查看器、SDL 2D 输入演示和 Vulkan 清屏模式。
 
-当前工作区已实现 M0–M10 的功能。M11 计划完成训练关卡的结束和重开流程、巡逻/追击/攻击 AI、Tracy 性能分析及发布验收。
+首期 M0–M11 的功能及运行验证见 [测试与验收](#测试与验收)。Tracy 采样方法和结果见 [M11 性能记录](docs/M11_Performance.md)。
 
 ## 目录
 
@@ -13,6 +13,7 @@
 - [架构与目录](#架构与目录)
 - [技术栈与依赖](#技术栈与依赖)
 - [着色器开发](#着色器开发)
+- [编辑训练场](#编辑训练场)
 - [测试与验收](#测试与验收)
 - [常见问题](#常见问题)
 
@@ -27,13 +28,13 @@ zig version
 zig build run
 ```
 
-窗口打开后，按 **Tab** 捕获鼠标，按住 **WASD** 移动。出生点正前方、贴着远端围墙的窄板是靶子。左键开火，**R** 换弹，**Esc** 退出。
+窗口打开后，按 **Tab** 捕获鼠标并开始，按 **WASD** 移动。击倒远端围墙前的蓝色靶板和橙色巡逻机器人即可通关。左键开火，**R** 换弹，回合结束后按 **E** 重开，**Esc** 退出。
 
 ## 操作与训练场
 
 | 操作 | 默认训练场 | 外部模型模式 |
 | --- | --- | --- |
-| Tab | 捕获或释放鼠标 | 捕获或释放鼠标 |
+| Tab | 开始或暂停训练并切换鼠标捕获 | 捕获或释放鼠标 |
 | 鼠标移动 | 捕获后转动视角 | 捕获后转动视角 |
 | W / A / S / D | 前进、左移、后退、右移 | 按相机朝向飞行 |
 | 左 Shift | 冲刺 | 加速飞行 |
@@ -41,14 +42,17 @@ zig build run
 | 左 Ctrl | — | 下降 |
 | 鼠标左键 | 点击或按住开火 | — |
 | R | 换弹 | — |
+| E | 在胜负结算后重开 | — |
 | Esc / 关闭窗口 | 退出 | 退出 |
 
-失焦或最小化时会清除按住的动作并释放鼠标。释放鼠标后，可拖动左上角调试面板的 `Rotation` 滑块调整旋转展示物。
+失焦或最小化时会清除按住的动作、释放鼠标并暂停当前回合。释放鼠标后，可拖动左上角调试面板的 `Rotation` 滑块调整旋转展示物。
 
 - **移动**由 Jolt 胶囊角色处理。角色沿地面移动，抵达斜向围墙时可沿墙滑动，也可跳上出生点左侧的低障碍。调试面板会显示着地状态、刚体数、当前帧的物理步数和最近命中距离。
 - **开火**使用相机位置和朝向发出的射线。墙、地面和其他刚体能挡住靶子。训练武器每次造成 25 点伤害，弹匣 6 发，射速上限每秒 4 发，换弹约 1.2 秒，备弹不限。未命中也会消耗弹药。
-- **反馈**分三种颜色。蓝色表示碰到表面，黄色表示造成伤害，红色表示击倒。靶板有 100 HP，四次命中后调试面板显示 `Target down`。击倒后的靶板仍参与碰撞，重新启动 Demo 会恢复靶板生命。
-- **HUD 和音效**显示左下角玩家生命、右下角弹匣与换弹进度、右上角 FPS。准星在鼠标捕获期间显示。开火声和命中提示音可叠加。玩家与靶板各有独立生命值，当前训练场没有会攻击玩家的敌人。
+- **机器人**有 75 HP，沿固定巡逻点移动。发现玩家后会追击，绕过场内掩体。玩家在视线畅通且进入攻击距离时，机器人蓄力后每次造成 20 点伤害。掩体阻挡视线后可中断蓄力。
+- **反馈**分三种颜色。蓝色表示碰到表面，黄色表示造成伤害，红色表示击倒。靶板有 100 HP，四次命中后调试面板显示 `Target down`，靶板仍参与碰撞。机器人被击倒后从场景和碰撞世界移除。
+- **HUD 和音效**显示玩家生命、弹匣、换弹进度和 FPS。调试面板显示两个目标的进度、机器人的状态和剩余生命。开火声和命中提示音可叠加。
+- **结算**在两个目标均被击倒时显示 `Range cleared`，玩家生命归零时显示 `Training failed`。按 **E** 恢复出生点、视角、生命、弹药、目标与动态刚体。
 
 ## 运行模式与构建
 
@@ -60,15 +64,17 @@ zig build run
 | `zig build run -Ddemo-2d=true` | 启动 M1 2D 输入演示，检查窗口事件、方向键位和鼠标增量 |
 | `zig build run -Dclear-only=true` | 启动 M2 Vulkan 深蓝色清屏，检查设备和交换链 |
 | `zig build` | 安装 Debug 可执行文件到 `zig-out/bin/zigsdl3demo` |
-| `zig build --release=small` | 构建带运行时安全检查的优化版本 |
+| `zig build -Doptimize=ReleaseSafe` | 构建带运行时安全检查的发布版本 |
 | `zig build --help` | 查看构建步骤、目标选项和安装路径 |
 
 两种基础演示模式应分别启动。各自的构建会跳过 Jolt、资产导入、ImGui 和 miniaudio 的场景集成。使用 `--prefix` 可为不同配置指定独立的输出目录。下例将 ReleaseSafe 安装到单独的目录，默认目录可继续用于 Debug。
 
 ```sh
-zig build --release=small --prefix zig-out/release
+zig build -Doptimize=ReleaseSafe --prefix zig-out/release
 ./zig-out/release/bin/zigsdl3demo
 ```
+
+发布版将 GLB 和 SPIR-V 嵌入可执行文件，可从任意当前目录直接启动。Tracy 通过 `-Dtracy-source` 单独启用。
 
 ## 加载外部 glTF 或 GLB
 
@@ -97,7 +103,7 @@ SDL 事件 → InputState → 应用相机转向和角色输入
   ↓
 Jolt 固定步进，同步实体位姿并更新相机位置
   ↓
-处理开火与换弹，按命中结果应用伤害并触发反馈
+处理开火与换弹 → 更新敌人状态、攻击与回合结果
   ↓
 Render Queue → 阴影 → 不透明场景 → 天空盒 → HUD / 调试面板
 ```
@@ -110,15 +116,17 @@ Render Queue → 阴影 → 不透明场景 → 天空盒 → HUD / 调试面板
 | [src/engine/scene](src/engine/scene) | 实体及组件 Registry、父子变换、模型实例和 MeshRenderer |
 | [src/engine/assets](src/engine/assets) | 静态 glTF 导入、纹理解码、带代数的资源句柄、资源缓存和 GPU 上传 |
 | [src/engine/physics](src/engine/physics) | Jolt C ABI 桥接、刚体、碰撞层、射线、胶囊角色及训练场布置 |
-| [src/engine/gameplay](src/engine/gameplay) | 武器状态、弹匣、换弹、Hitscan 及可受伤实体的 Health 组件 |
+| [src/engine/gameplay](src/engine/gameplay) | 武器与生命组件、机器人状态机和路点寻路 |
 | [src/engine/renderer](src/engine/renderer) | SDL GPU 交换链、相机、Render Queue、光照阴影、天空盒和 ImGui |
 | [src/engine/audio](src/engine/audio) | miniaudio 桥接与训练场的短 PCM 开火、命中音效 |
-| [assets](assets)、[shaders](shaders) | 内嵌训练场原始 GLB、HLSL 与默认嵌入的 SPIR-V |
+| [assets](assets)、[shaders](shaders) | Blender 场地导出脚本、内嵌 GLB、HLSL 与默认嵌入的 SPIR-V |
 | [src/physics_test.zig](src/physics_test.zig) | Jolt 碰撞、角色移动和武器事件的无窗口测试 |
 
 资产从文件加载时按规范绝对路径缓存，内嵌资源按名称缓存。同一个模型可由多实体共享网格、纹理和材质。场景实例持有模型引用期间，对应 GPU 资源和句柄保持可用。默认训练场会重复请求一次模型，启动日志应出现 `缓存命中 embedded:demo.glb`。
 
 Jolt 提供 Box、Sphere、Capsule 和静态三角网格，使用静态、动态两种刚体层。模拟步长是 1/60 秒，每帧最多运行六个物理步。动态刚体位置和旋转以物理状态为准，渲染缩放与父子变换由场景管理。相机跟随胶囊脚点上方 1.6 米，射线从该位置出发并查询最近碰撞。
+
+训练场的场地网格、GPU 资源和音频贯穿窗口生命周期。重开时先创建新 Jolt 世界与回合实体，再释放旧世界与旧实体。机器人使用 Jolt 运动学碰撞体，导航在水平面内通过可见路点搜索最短通路，按掩体边界和机器人宽度判定线段可达性。
 
 前向管线使用 2048×2048 方向光阴影图和 3×3 PCF 采样。主 Pass 着色与阴影 Pass 采用相同的 Alpha Mask 阈值。法线贴图使用线性采样，缺少切线的模型可由屏幕导数重建切线空间。天空盒来自程序生成的六面立方体贴图。
 
@@ -134,6 +142,7 @@ Jolt 提供 Box、Sphere、Capsule 和静态三角网格，使用静态、动态
 | [cgltf](https://github.com/jkuhlmann/cgltf/releases/tag/v1.15) | v1.15 | glTF / GLB 解析 |
 | [stb_image](https://github.com/nothings/stb/tree/f0569113c93ad095470c54bf34a17b36646bbbb5) | v2.30，提交 `f056911` | PNG 和 JPEG 解码 |
 | [miniaudio](https://github.com/mackron/miniaudio/releases/tag/0.11.26) | 0.11.26 | 短 PCM 音效混音与播放 |
+| [Tracy](https://github.com/wolfpld/tracy/tree/v0.12.2) | v0.12.2，可选 | 本地 CPU 帧标记与分区计时 |
 
 Zig 直接编译 Jolt 核心源码，通过 C ABI 和 TranslateC 接入 Zig 0.17.1。规划阶段试验过的 [zphysics 提交](https://github.com/zig-gamedev/zphysics/tree/1414dba86b281f89d72f81a5936ab5d03c15b2b9) 使用旧版 Zig 优化枚举，因此当前采用直接桥接。miniaudio 音效在训练场初始化时生成，运行时无需外部音效文件。
 
@@ -155,6 +164,15 @@ done
 
 仓库中的 SPIR-V 曾使用 [SDL_shadercross 1ff05be](https://github.com/libsdl-org/SDL_shadercross/tree/1ff05bec573988a98ef9e0260b4da44f512b8367) 和 [DXC v1.8.2505.1](https://github.com/microsoft/DirectXShaderCompiler/releases/tag/v1.8.2505.1) 重新生成并逐字节核对。可执行文件启动时无需 shadercross 或外部 shader 文件。
 
+## 编辑训练场
+
+[Blender 导出脚本](assets/export_range.py) 生成 [range.glb](assets/range.glb)。`Solid_*` 节点提供渲染网格和轴对齐的 Jolt 盒体边界。空节点保存玩家出生点、靶板和箱子的中心、巡逻点 `Patrol_0`–`Patrol_3` 和导航点 `Nav_0`–`Nav_7`。修改障碍位置时，让导航点保留足够的通行空间。发布构建直接嵌入导出的 GLB。
+
+```sh
+blender -b -noaudio --python-exit-code 1 --python assets/export_range.py
+zig build run
+```
+
 ## 测试与验收
 
 ```sh
@@ -165,17 +183,18 @@ zig build test -Ddemo-2d=true
 zig build test -Dclear-only=true
 ```
 
-`zig build test` 覆盖基础设施、SDL 输入、场景句柄、父子变换、Render Queue、glTF 导入和物理。`zig build physics-test` 可独立验证碰撞、射线层过滤、角色贴地和跳跃、开火节奏、空弹匣、换弹、遮挡和伤害事件，无需窗口或 GPU。
+`zig build test` 覆盖基础设施、SDL 输入、场景句柄、父子变换、Render Queue、glTF 导入和物理。`zig build physics-test` 可独立验证碰撞、角色贴地和跳跃、射线与武器、路点绕障、机器人追击与遮挡中断攻击，无需窗口或 GPU。
 
 ### 手动验收
 
-1. 默认训练场启动后应显示棋盘格模型、天空盒和随展示物移动的阴影。右侧小立方体从空中落地，调试面板报告 8 个 Jolt 刚体和 20 次不透明绘制。
+1. 默认训练场启动后应显示棋盘格模型、场地、天空盒和随展示物移动的阴影。按 Tab 后，右侧小立方体从空中落地，调试面板报告 10 个 Jolt 刚体和 18 次不透明绘制。
 2. 按 Tab 捕获鼠标，验证走、跑、跳和沿墙滑动。按住空格应只触发一次起跳，跳上左侧低障碍后应恢复着地状态。
 3. 连续命中正前方靶板四次，观察靶板生命降至 0、黄色命中标记及红色击倒标记。朝地面开火应出现蓝色标记。
 4. 朝天空开火，应消耗弹药并仅播放开火声。打空后按 R，确认换弹进度和完成后弹匣回到 6 发。命中时应同时听到较高的提示音。
 5. 调整窗口尺寸，确认 HUD 重新定位、场景继续提交帧，释放鼠标后准星隐藏。检查 Esc 与窗口关闭两条退出路径。
 6. 运行 M1 2D 模式，检查 WASD、快速点击左键、Tab 捕获、失焦和窗口缩放。运行 M2 清屏模式，检查深蓝色清屏、窗口缩放和最小化后恢复。
 7. 用外部 GLB 或 glTF 启动查看模式，检查节点变换、纹理和自由飞行。对含外部缓冲区的场景，保留原相对路径后再运行。
+8. 朝机器人接近，观察调试面板从 `Patrol` 变为 `Chase` 和 `Attack`。持续停在攻击范围内，确认玩家死亡后显示 `Training failed`。按 E 重开，击倒机器人和靶板，确认显示 `Range cleared`。再次按 E，检查起始生命、弹药、目标和刚体都已恢复。
 
 ### 无桌面冒烟测试
 
@@ -213,9 +232,9 @@ timeout --preserve-status --kill-after=2s 3s env \
 | M8 角色 | Xvfb / Lavapipe 验证走、跑、跳、碰墙停止与落地 |
 | M9 武器 | Xvfb / Lavapipe 验证伤害、击倒、三种命中标记、空弹匣和换弹 |
 | M10 HUD / 音效 | 验证 HUD 随窗口缩放，释放鼠标隐藏准星。隔离 ALSA 输出捕获 7 次开火声，其中 5 次有额外命中音 |
-| M11 Demo / Hardening | 计划阶段，范围包括训练关卡结束与重开、敌人状态机和路点、性能分析及发布验收 |
+| M11 Demo / Hardening | Blender 场地、机器人状态机与路点、胜负结算与重开、ReleaseSafe 发布构建及 [Tracy 采样](docs/M11_Performance.md) |
 
-截至 M10，默认 Debug、ReleaseSafe、2D 和清屏配置均通过构建与测试。交互与音频记录来自 Linux 虚拟显示、软件 Vulkan 与隔离音频输出。发布前仍需验证实体 GPU、真实桌面窗口管理器的最小化与恢复，以及物理播放设备。里程碑表记录的是功能和验收状态，发布标签以 `git tag --list` 为准。
+默认 Debug、ReleaseSafe、2D 和清屏配置均通过构建与测试。交互与音频记录来自 Linux 虚拟显示、软件 Vulkan 与隔离音频输出。实体 GPU、真实桌面窗口管理器和物理播放设备尚待实机验证。发布标签以 `git tag --list` 为准。
 
 ## 常见问题
 
