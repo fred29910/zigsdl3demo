@@ -1,5 +1,7 @@
 installed:
 - agent-context
+- assess
+- bug
 settings:
   auto_execute_hooks: true
 hooks:
