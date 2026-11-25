@@ -48,8 +48,8 @@
             .lazy = true,
         },
         .imgui = .{
-            .url = "https://github.com/ocornut/imgui/archive/refs/tags/v1.92.5.tar.gz",
-            .hash = "N-V-__8AALp9cwA8tEuEno2YCZyivsMaobnF-Z7qZGY3qBOt",
+            .url = "https://github.com/ocornut/imgui/archive/refs/tags/v1.93.0.tar.gz",
+            .hash = "N-V-__8AAEVjfgCU7hthaWtlDkNjFB4HE1XYqFl6UO7oqXwD",
             .lazy = true,
         },
         .miniaudio = .{

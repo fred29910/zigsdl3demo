@@ -18,14 +18,16 @@
 
 **升级前基线快照（T001，2026-11-25；Zig 0.17.1，源码与依赖声明无未提交改动）**：
 
-| 依赖 | 当前版本标识 | 当前内容哈希 |
-| --- | --- | --- |
-| jolt | v5.5.0 | `N-V-__8AAAPKDAINa53XiVzIJ2I4V3AAjPxzQ_bJ9TD7TOOS` |
-| cgltf | v1.15 | `N-V-__8AAKFjBABZzn84N4iiLQyNQSMVsv5XBJSvZTPcQL2H` |
-| stb | `f0569113c93ad095470c54bf34a17b36646bbbb5` | `N-V-__8AAJopTgBuYbPPno6GEtqFAeIhKHyhTJcJ-Vp2FpHj` |
-| imgui | v1.92.5 | `N-V-__8AALp9cwA8tEuEno2YCZyivsMaobnF-Z7qZGY3qBOt` |
-| miniaudio | 0.11.26 | `N-V-__8AAOYywgDjFH2rxtvPz3D1RS7WRGMqfpncZjJW-jIl` |
-| sdl3 | `aaa5868464855ab0bda4dffe1cf424709f665669` | `sdl3-0.1.0-WOwCypO_BACuJ0ijR3Y3kamzX0Ds_uzIaY-ucLwBdPog` |
+| 依赖 | 名称 | 来源类型 | 当前版本标识 | 当前内容哈希 |
+| --- | --- | --- | --- | --- |
+| jolt | `jolt` | release tag | v5.5.0 | `N-V-__8AAAPKDAINa53XiVzIJ2I4V3AAjPxzQ_bJ9TD7TOOS` |
+| cgltf | `cgltf` | release tag | v1.15 | `N-V-__8AAKFjBABZzn84N4iiLQyNQSMVsv5XBJSvZTPcQL2H` |
+| stb | `stb` | 提交 SHA | `f0569113c93ad095470c54bf34a17b36646bbbb5` | `N-V-__8AAJopTgBuYbPPno6GEtqFAeIhKHyhTJcJ-Vp2FpHj` |
+| imgui | `imgui` | release tag | v1.92.5 | `N-V-__8AALp9cwA8tEuEno2YCZyivsMaobnF-Z7qZGY3qBOt` |
+| miniaudio | `miniaudio` | release tag | 0.11.26 | `N-V-__8AAOYywgDjFH2rxtvPz3D1RS7WRGMqfpncZjJW-jIl` |
+| sdl3 | `sdl3` | git 固定提交 | `aaa5868464855ab0bda4dffe1cf424709f665669` | `sdl3-0.1.0-WOwCypO_BACuJ0ijR3Y3kamzX0Ds_uzIaY-ucLwBdPog` |
+
+**T010 覆盖率核对**：R1 的 6 个名称与 `build.zig.zon` `.dependencies` 的键完全一致（6/6，100%），每项均记录了当前版本、哈希、上游最新版本与结论；本阶段未修改 `build.zig.zon`（满足 SC-001）。
 
 上游 SDL 本体最新为 `release-3.4.20`（2026-11-03），与当前绑定版本一致，因此 sdl3-zig 无需升级。
 

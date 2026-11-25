@@ -67,7 +67,7 @@ specs/002-upgrade-direct-deps/
 build.zig.zon            # 直接依赖声明：本功能唯一需要改写的依赖源文件
 build.zig                # 构建图与测试步骤；仅验证兼容性，不改构建逻辑
 README.md                # 依赖表与升级记录（SC-006 留痕位置）
-src/                     # 源码不改动；仅在门禁失败时作为回退判定依据
+src/                     # 原则上不改；仅当门禁因依赖 API 变化失败时允许 FR-011 的最小源码适配，否则作为回退判定依据
 docs/                    # 如需补充验收记录则在此更新
 zig-pkg/ zig-out/ .zig-cache/   # 生成物与缓存，禁止手工编辑
 ```

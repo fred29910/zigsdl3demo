@@ -20,6 +20,16 @@ cat build.zig.zon
 
 确认 `.dependencies` 的 6 个键与上游最新版本结论（见 [research.md](research.md) R1）。记录每个依赖的原版本与哈希。
 
+**基线门禁结果（T002，2026-11-25，Zig 0.17.1）**：
+
+| 门禁 | 命令 | 结果 |
+| --- | --- | --- |
+| G1 | `zig build install test` | 通过（exit 0） |
+| G2 | `zig build install test -Doptimize=ReleaseSafe` | 通过（exit 0） |
+| G3 | `zig build physics-test` | 通过（exit 0） |
+| G4 | `zig build test -Ddemo-2d=true` | 通过（exit 0） |
+| G5 | `zig build test -Dclear-only=true` | 通过（exit 0） |
+
 ### 2. RED：先写检查并看到失败
 
 依据宪章 II，升级前先编写 `specs/002-upgrade-direct-deps/contracts/check-target-versions.sh`，断言目标版本（imgui v1.93.0、jolt v5.7.0、stb 提交 `6b5799b`）与精确锁定规则。运行该脚本，预期在当前版本下**失败（RED）**；将失败输出写入 `specs/002-upgrade-direct-deps/contracts/acceptance-gates.md` 并取得用户确认后，才允许进入下一步。**未确认前不要修改 `build.zig.zon`。**

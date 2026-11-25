@@ -144,6 +144,19 @@ Jolt 提供 Box、Sphere、Capsule 和静态三角网格，使用静态、动态
 | [miniaudio](https://github.com/mackron/miniaudio/releases/tag/0.11.26) | 0.11.26 | 短 PCM 音效混音与播放 |
 | [Tracy](https://github.com/wolfpld/tracy/tree/v0.12.2) | v0.12.2，可选 | 本地 CPU 帧标记与分区计时 |
 
+**直接依赖升级记录**（原版本 → 新版本/保持原样及理由，仅限 `build.zig.zon` 声明的直接依赖）：
+
+| 依赖 | 原版本 | 新版本 | 理由 |
+| --- | --- | --- | --- |
+| sdl3-zig | `aaa5868`（SDL 3.4.20） | 保持 `aaa5868`（SDL 3.4.20） | 上游已是最新，无需升级 |
+| Dear ImGui | v1.92.5 | v1.93.0（待门禁验证） | 上游稳定版发布，待门禁验证 |
+| Jolt Physics | v5.5.0 | v5.7.0（待门禁验证） | 上游稳定版发布，待门禁验证（含 C ABI 小幅破坏性变更） |
+| cgltf | v1.15 | 保持 v1.15 | 上游已是最新，无需升级 |
+| stb_image | 提交 `f056911` | 提交 `6b5799b`（待门禁验证） | 无发布机制，取 master 最新提交，待门禁验证 |
+| miniaudio | 0.11.26 | 保持 0.11.26 | 上游已是最新，无需升级 |
+
+Tracy 为可选外部源码（经 `-Dtracy-source` 指定本地路径使用），不在直接依赖清单内，本次不纳入升级评估。
+
 Zig 直接编译 Jolt 核心源码，通过 C ABI 和 TranslateC 接入 Zig 0.17.1。规划阶段试验过的 [zphysics 提交](https://github.com/zig-gamedev/zphysics/tree/1414dba86b281f89d72f81a5936ab5d03c15b2b9) 使用旧版 Zig 优化枚举，因此当前采用直接桥接。miniaudio 音效在训练场初始化时生成，运行时无需外部音效文件。
 
 ## 着色器开发
