@@ -152,6 +152,7 @@ fn configurePhysics(b: *std.Build, jolt: *std.Build.Dependency, target: std.Buil
 fn configureAssets(b: *std.Build, app: *std.Build.Module) void {
     app.addAnonymousImport("demo.glb", .{ .root_source_file = b.path("assets/demo.glb") });
     app.addAnonymousImport("range.glb", .{ .root_source_file = b.path("assets/range.glb") });
+    app.addAnonymousImport("DroidSansFallbackFull.ttf", .{ .root_source_file = b.path("assets/DroidSansFallbackFull.ttf") });
     const cgltf = b.lazyDependency("cgltf", .{});
     const stb = b.lazyDependency("stb", .{});
     if (cgltf == null or stb == null) return;

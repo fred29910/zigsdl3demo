@@ -5,6 +5,7 @@ const sdl = @import("sdl3");
 const Logger = @import("zigsdl3demo").Logger;
 const GpuRenderer = @import("engine/renderer/gpu_renderer.zig").GpuRenderer;
 const DemoScene = @import("engine/renderer/demo_scene.zig").DemoScene;
+const lobby = @import("engine/gameplay/lobby.zig");
 const options = @import("build_options");
 const demo_2d = options.demo_2d;
 const show_scene = !demo_2d and !options.clear_only;
@@ -51,6 +52,15 @@ pub fn main(init: std.process.Init) !void {
     } else {};
     defer if (show_scene) scene.deinit();
 
+    // 游戏大厅：默认构建先显示大厅，选择模式后才进入对应画面。
+    var session = lobby.Session{};
+    var path_buf: [1024]u8 = undefined;
+    @memset(&path_buf, 0);
+    var sens_ui: f32 = session.settings.sensitivity;
+    var vol_ui: c_int = @intCast(session.settings.volume);
+    var renderer_2d: ?sdl.Renderer = null;
+    defer if (renderer_2d) |r| r.deinit();
+
     var vsync = true;
     if (demo_2d) renderer.setVSync(1) catch {
         vsync = false;
@@ -71,9 +81,9 @@ pub fn main(init: std.process.Init) !void {
     if (demo_2d)
         log.log(.info, "demo", "WASD 移动，左键触发动作，Tab 捕获或释放鼠标，Esc 退出", .{})
     else if (show_scene and model_path == null)
-        log.log(.info, "demo", "Tab 捕获鼠标并开始，WASD 移动，左 Shift 冲刺，空格跳跃，左键开火，R 换弹，E 重开已结束的回合，Esc 退出", .{})
+        log.log(.info, "demo", "大厅选择模式进入；模式内 Esc 返回大厅，大厅内 Esc 不退出；Tab 捕获鼠标并开始，WASD 移动，左 Shift 冲刺，空格跳跃，左键开火，R 换弹，E 重开已结束的回合", .{})
     else if (show_scene)
-        log.log(.info, "demo", "Tab 捕获鼠标，WASD/空格/Ctrl 飞行，Esc 退出", .{})
+        log.log(.info, "demo", "自由飞行查看：Tab 捕获鼠标，WASD/空格/Ctrl 飞行，Esc 返回大厅", .{})
     else
         log.log(.info, "demo", "Vulkan 固定色清屏，Tab 捕获或释放鼠标，Esc 退出", .{});
     logSizes(logical_size, pixel_size);
@@ -113,7 +123,21 @@ pub fn main(init: std.process.Init) !void {
                 },
                 .key_down => |e| {
                     if (e.window_id != window_id or !focused) continue;
-                    if (e.scancode == .escape) break :loop;
+                    if (e.scancode == .escape) {
+                        // 独立构建（2D/清屏）无大厅 UI，保持原有退出行为。
+                        if (!show_scene) break :loop;
+                        if (session.view == .lobby) continue;
+                        // 从外部模型查看返回时，用内嵌模型重建场景，避免旧模型残留。
+                        if (session.view == .viewer) {
+                            scene.deinit();
+                            scene = DemoScene.init(renderer, init.gpa, init.io, null) catch |err| {
+                                log.log(.error_, "scene", "恢复内嵌训练场失败 ({s})", .{@errorName(err)});
+                                break :loop;
+                            };
+                        }
+                        lobby.returnToLobby(&session);
+                        log.log(.info, "lobby", "返回大厅", .{});
+                    }
                     if (e.scancode == .tab and !e.repeat and !minimized)
                         setCapture(&input, !input.mouseCaptured());
                 },
@@ -136,14 +160,81 @@ pub fn main(init: std.process.Init) !void {
         }
         if (input.pressed(.fire)) log.log(.info, "input", "检测到左键按下", .{});
 
-        if (demo_2d) {
+        const in_lobby = show_scene and (session.view == .lobby or session.view == .preview);
+        if (in_lobby) {
+            if (session.view == .preview) {
+                // renderPreview 的动作码 1/2 对应 LobbyAction.training/preview。
+                if (try scene.renderPreview(renderer, &path_buf, session.notice)) |res| {
+                    switch (res.action) {
+                        .training => {
+                            const path = std.mem.sliceTo(&path_buf, 0);
+                            if (path.len == 0) {
+                                lobby.setNotice(&session, "请输入模型文件路径。");
+                            } else {
+                                scene.deinit();
+                                scene = DemoScene.init(renderer, init.gpa, init.io, path) catch |err| {
+                                    log.log(.error_, "scene", "模型加载失败 ({s}): {s}", .{ @errorName(err), sdl.lastErrorText() });
+                                    scene = DemoScene.init(renderer, init.gpa, init.io, null) catch return err;
+                                    lobby.setNotice(&session, "模型加载失败，请检查路径及其引用的 .bin 与纹理是否完整。");
+                                    lobby.returnToLobby(&session);
+                                    continue;
+                                };
+                                session.view = .viewer;
+                                session.last_mode = .viewer;
+                                log.log(.info, "lobby", "外部模型已加载: {s}", .{path});
+                                @memset(&path_buf, 0);
+                                applySettings(&scene, session.settings);
+                            }
+                        },
+                        .preview => lobby.returnToLobby(&session),
+                        else => {},
+                    }
+                }
+            } else {
+                if (try scene.renderLobby(renderer, &sens_ui, &vol_ui, session.notice)) |res| {
+                    // UI 通过指针写回设置；收敛到允许范围并给出可读提示。
+                    const clamped_s = lobby.clampSensitivity(sens_ui);
+                    const clamped_v = lobby.clampVolume(vol_ui);
+                    if ((clamped_s != sens_ui or clamped_v != vol_ui) and session.notice == null)
+                        lobby.setNotice(&session, "已调整为允许范围边界。");
+                    session.settings.sensitivity = clamped_s;
+                    session.settings.volume = clamped_v;
+                    sens_ui = clamped_s;
+                    vol_ui = @intCast(clamped_v);
+                    switch (res.action) {
+                        .quit => break :loop,
+                        .training => {
+                            enterMode(&session, .training, now_ns);
+                            applySettings(&scene, session.settings);
+                        },
+                        .preview => enterMode(&session, .preview, now_ns),
+                        .clear_only => enterMode(&session, .clear_only, now_ns),
+                        .demo_2d => {
+                            if (renderer_2d == null)
+                                renderer_2d = sdl.Renderer.init(window, "software") catch null;
+                            if (renderer_2d != null) {
+                                enterMode(&session, .demo_2d, now_ns);
+                            } else {
+                                lobby.setNotice(&session, "图形设备初始化失败，无法启动 2D 输入演示。");
+                            }
+                        },
+                        .none => {},
+                    }
+                }
+            }
+        } else if (demo_2d) {
             draw(renderer, pixel_size, &input, mouse_offset) catch |err| {
                 log.log(.error_, "sdl", "绘制失败: {s}", .{sdl.lastErrorText()});
                 return err;
             };
             if (!vsync) sdl.timer.delay(16);
+        } else if (session.view == .demo_2d and renderer_2d != null) {
+            draw(renderer_2d.?, pixel_size, &input, mouse_offset) catch |err| {
+                log.log(.error_, "sdl", "2D 绘制失败: {s}", .{sdl.lastErrorText()});
+                return err;
+            };
         } else {
-            const extent = if (show_scene)
+            const extent = if (show_scene and (session.view == .training or session.view == .viewer))
                 try scene.render(renderer, &input, frame_seconds)
             else
                 try renderer.clear();
@@ -161,9 +252,22 @@ pub fn main(init: std.process.Init) !void {
     log.log(.info, "demo", "退出", .{});
 }
 
+fn enterMode(session: *lobby.Session, view: lobby.View, now_ns: u64) void {
+    if (lobby.confirm(session, view, now_ns)) {
+        lobby.beginMode(session);
+        log.log(.info, "lobby", "进入模式: {s}", .{@tagName(view)});
+    }
+}
+
+fn applySettings(scene: *DemoScene, settings: lobby.Settings) void {
+    scene.setSensitivityFromUi(settings.sensitivity);
+    scene.setVolume(@as(f32, @floatFromInt(settings.volume)) / 100.0);
+}
+
 test {
     _ = @import("engine/renderer/camera.zig");
     _ = @import("engine/renderer/render_queue.zig");
+    _ = @import("engine/gameplay/lobby.zig");
     if (show_scene) {
         _ = @import("engine/assets/gltf.zig");
         _ = @import("engine/renderer/lighting.zig");

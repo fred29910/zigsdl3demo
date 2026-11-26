@@ -122,3 +122,14 @@ void demo_audio_play_shot(DemoAudio *audio, int hit)
     if (hit)
         play(&audio->hit);
 }
+
+void demo_audio_set_volume(DemoAudio *audio, float volume_01)
+{
+    if (!audio)
+        return;
+    if (volume_01 < 0.0f)
+        volume_01 = 0.0f;
+    if (volume_01 > 1.0f)
+        volume_01 = 1.0f;
+    ma_engine_set_volume(&audio->engine, volume_01);
+}

@@ -8,6 +8,7 @@ pub const Camera = struct {
     position: Vec3 = .{ 0, 0, -5 },
     yaw: f32 = 0,
     pitch: f32 = 0,
+    sensitivity: f32 = 0.0025,
 
     pub const Uniforms = extern struct {
         eye: [4]f32,
@@ -31,8 +32,13 @@ pub const Camera = struct {
 
     pub fn look(self: *Camera, input: *const InputState) void {
         const delta = input.mouseDelta();
-        self.yaw = @mod(self.yaw + delta.x * 0.0025, 2.0 * std.math.pi);
-        self.pitch = std.math.clamp(self.pitch - delta.y * 0.0025, -1.55, 1.55);
+        self.yaw = @mod(self.yaw + delta.x * self.sensitivity, 2.0 * std.math.pi);
+        self.pitch = std.math.clamp(self.pitch - delta.y * self.sensitivity, -1.55, 1.55);
+    }
+
+    pub fn setSensitivityFromUi(self: *Camera, multiplier: f32) void {
+        const clamped = std.math.clamp(multiplier, 0.5, 2.0);
+        self.sensitivity = 0.0025 * clamped;
     }
 
     pub fn fly(self: *Camera, input: *const InputState, dt: f32) void {
@@ -72,6 +78,32 @@ pub const Camera = struct {
 
 fn pack(v: Vec3) [4]f32 {
     return .{ v[0], v[1], v[2], 0 };
+}
+
+test "camera sensitivity default and UI mapping" {
+    var cam = Camera{};
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0025), cam.sensitivity, 0.000001);
+    cam.setSensitivityFromUi(2.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.005), cam.sensitivity, 0.000001);
+
+    cam.setSensitivityFromUi(0.1);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0025 * 0.5), cam.sensitivity, 0.000001);
+    cam.setSensitivityFromUi(5.0);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.0025 * 2.0), cam.sensitivity, 0.000001);
+
+    var input = InputState.init();
+    input.mouse_dx = 10;
+    input.mouse_dy = 4;
+    var c1 = Camera{};
+    var c2 = Camera{};
+    c2.setSensitivityFromUi(2.0);
+    const yaw0_1 = c1.yaw;
+    const yaw0_2 = c2.yaw;
+    c1.look(&input);
+    c2.look(&input);
+    const inc1 = c1.yaw - yaw0_1;
+    const inc2 = c2.yaw - yaw0_2;
+    try std.testing.expectApproxEqAbs(inc1 * 2.0, inc2, 0.0001);
 }
 
 test "perspective maps near and far planes to the SDL depth range" {

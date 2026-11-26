@@ -33,6 +33,10 @@ fn moveAxis(positive: bool, negative: bool) f32 {
 extern fn demo_imgui_init(window: *raw.SDL_Window, device: *raw.SDL_GPUDevice) bool;
 extern fn demo_imgui_shutdown() void;
 extern fn demo_imgui_event(event: *const raw.SDL_Event) void;
+extern fn demo_imgui_load_font_bytes(bytes: *const anyopaque, len: usize) bool;
+extern fn demo_imgui_prepare_lobby(sensitivity: *f32, volume: *c_int, notice: ?[*:0]const u8) c_int;
+extern fn demo_imgui_prepare_lobby_upload(commands: *raw.SDL_GPUCommandBuffer) void;
+extern fn demo_imgui_prepare_preview(path_buf: [*]u8, path_cap: usize) c_int;
 const TrainingStatus = extern struct {
     rounds: u32,
     capacity: u32,
@@ -109,6 +113,9 @@ const Training = struct {
     }
 };
 
+pub const LobbyAction = enum(u8) { none, training, preview, demo_2d, clear_only, quit };
+pub const LobbyRender = struct { extent: GpuRenderer.Extent, action: LobbyAction };
+
 pub const DemoScene = struct {
     registry: scene.Registry,
     queue: RenderQueue,
@@ -178,6 +185,8 @@ pub const DemoScene = struct {
         const sky_pipeline = try createPipeline(.sky, device, color_format, depth_format);
         errdefer device.releaseGraphicsPipeline(sky_pipeline);
         if (!demo_imgui_init(renderer.window.handle, @ptrCast(device))) return error.ImGuiInit;
+        const font_bytes = @embedFile("DroidSansFallbackFull.ttf");
+        if (!demo_imgui_load_font_bytes(font_bytes.ptr, font_bytes.len)) return error.FontLoad;
         const audio = if (training != null) DemoAudio.init() else null;
         if (training) |*range| {
             log.log(.info, "physics", "Jolt 已就绪，{d} 个刚体，步长 1/60 秒", .{range.demo.world.bodyCount()});
@@ -234,6 +243,51 @@ pub const DemoScene = struct {
 
     pub fn processEvent(event: *const raw.SDL_Event) void {
         demo_imgui_event(event);
+    }
+
+    pub fn renderLobby(self: *DemoScene, renderer: GpuRenderer, sensitivity: *f32, volume: *c_int, notice: ?[]const u8) !?LobbyRender {
+        _ = self;
+        var notice_buf: [256]u8 = undefined;
+        const notice_ptr: ?[*:0]const u8 = if (notice) |n| blk: {
+            const len = @min(n.len, notice_buf.len - 1);
+            @memcpy(notice_buf[0..len], n[0..len]);
+            notice_buf[len] = 0;
+            break :blk @ptrCast(&notice_buf);
+        } else null;
+
+        const frame = (try renderer.acquireFrame()) orelse return null;
+        const action_code = demo_imgui_prepare_lobby(sensitivity, volume, notice_ptr);
+        const clamped = std.math.clamp(volume.*, 0, 100);
+        volume.* = clamped;
+        demo_imgui_prepare_lobby_upload(@ptrCast(frame.commands));
+        const pass = try frame.commands.beginRenderPass(&.{ frame.colorTarget(.clear) }, null);
+        demo_imgui_draw(@ptrCast(frame.commands), @ptrCast(pass));
+        pass.end();
+        try frame.submit();
+        const action: LobbyAction = @enumFromInt(@as(u8, @intCast(action_code)));
+        return .{ .extent = frame.extent, .action = action };
+    }
+
+    pub fn renderPreview(self: *DemoScene, renderer: GpuRenderer, path_buf: []u8, notice: ?[]const u8) !?LobbyRender {
+        _ = self;
+        _ = notice;
+        const frame = (try renderer.acquireFrame()) orelse return null;
+        const action_code = demo_imgui_prepare_preview(path_buf.ptr, path_buf.len);
+        demo_imgui_prepare_lobby_upload(@ptrCast(frame.commands));
+        const pass = try frame.commands.beginRenderPass(&.{ frame.colorTarget(.clear) }, null);
+        demo_imgui_draw(@ptrCast(frame.commands), @ptrCast(pass));
+        pass.end();
+        try frame.submit();
+        const action: LobbyAction = @enumFromInt(@as(u8, @intCast(action_code)));
+        return .{ .extent = frame.extent, .action = action };
+    }
+
+    pub fn setSensitivityFromUi(self: *DemoScene, multiplier: f32) void {
+        self.camera.setSensitivityFromUi(multiplier);
+    }
+
+    pub fn setVolume(self: *DemoScene, volume01: f32) void {
+        if (self.audio) |audio| audio.setVolume(volume01);
     }
 
     pub fn render(self: *DemoScene, renderer: GpuRenderer, input: *const InputState, dt: f32) !?GpuRenderer.Extent {
