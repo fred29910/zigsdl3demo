@@ -130,6 +130,8 @@ pub fn main(init: std.process.Init) !void {
                         // 从外部模型查看返回时，仅重建模型侧资源，保留 GPU/ImGui 后端。
                         if (session.view == .viewer) {
                             const reload_result = scene.reloadModel(init.io, null);
+                            if (input.mouseCaptured()) setCapture(&input, false);
+                            input.releaseAll();
                             lobby.returnToLobby(&session);
                             if (reload_result) |_| {} else |err| {
                                 log.log(.error_, "scene", "恢复内嵌训练场失败 ({s})", .{@errorName(err)});
@@ -139,6 +141,7 @@ pub fn main(init: std.process.Init) !void {
                             // 离开 2D 模式时释放软件渲染器，再重建 GPU surface/交换链。
                             // 仅销毁软件渲染器不足以恢复已被污染的 Wayland surface 绑定。
                             if (input.mouseCaptured()) setCapture(&input, false);
+                            input.releaseAll();
                             if (renderer_2d) |r| {
                                 r.deinit();
                                 renderer_2d = null;
@@ -150,12 +153,17 @@ pub fn main(init: std.process.Init) !void {
                                 lobby.setNotice(&session, "恢复图形设备失败，请重试。");
                             };
                         } else {
+                            if (input.mouseCaptured()) setCapture(&input, false);
+                            input.releaseAll();
                             lobby.returnToLobby(&session);
                         }
                         log.log(.info, "lobby", "返回大厅", .{});
                     }
-                    if (e.scancode == .tab and !e.repeat and !minimized)
-                        setCapture(&input, !input.mouseCaptured());
+                    if (e.scancode == .tab and !e.repeat and !minimized) {
+                        const was_captured = input.mouseCaptured();
+                        setCapture(&input, !was_captured);
+                        if (was_captured) input.releaseAll();
+                    }
                 },
                 else => {},
             }

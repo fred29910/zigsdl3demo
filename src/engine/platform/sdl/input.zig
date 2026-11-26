@@ -182,6 +182,20 @@ fn testKey(down: bool, repeat: bool) sdl.Event {
     return if (down) .{ .key_down = key } else .{ .key_up = key };
 }
 
+/// 供视角与失焦测试复用的鼠标相对位移事件。
+fn testMouseMotion(xrel: f32, yrel: f32) sdl.Event {
+    return .{ .mouse_motion = .{
+        .timestamp = 0,
+        .window_id = 0,
+        .which = 0,
+        .buttons = .{},
+        .x = 0,
+        .y = 0,
+        .xrel = xrel,
+        .yrel = yrel,
+    } };
+}
+
 test "same-frame tap keeps both input edges" {
     var state = InputState.init();
     state.beginFrame();
@@ -229,16 +243,7 @@ test "a fast left click maps to both fire edges" {
 
 test "mouse motion accumulates within a frame" {
     var state = InputState.init();
-    const motion_event: sdl.Event = .{ .mouse_motion = .{
-        .timestamp = 0,
-        .window_id = 0,
-        .which = 0,
-        .buttons = .{},
-        .x = 0,
-        .y = 0,
-        .xrel = 3,
-        .yrel = -2,
-    } };
+    const motion_event = testMouseMotion(3, -2);
     state.handleEvent(motion_event);
     state.handleEvent(motion_event);
     const d = state.mouseDelta();
@@ -252,4 +257,13 @@ test "capture failure without a window leaves capture disabled" {
     var state = InputState.init();
     try std.testing.expectError(error.NoWindow, state.setMouseCaptured(true));
     try std.testing.expect(!state.mouseCaptured());
+}
+
+test "releaseAll clears accumulated mouse delta on focus loss" {
+    var state = InputState.init();
+    state.handleEvent(testMouseMotion(12, -7));
+    try std.testing.expectEqual(@as(f32, 12), state.mouseDelta().x);
+    try std.testing.expectEqual(@as(f32, -7), state.mouseDelta().y);
+    state.releaseAll();
+    try std.testing.expectEqual(MouseDelta{}, state.mouseDelta());
 }

@@ -296,7 +296,7 @@ pub const DemoScene = struct {
         self.spin_base = new_spin_base;
 
         // 重置每场景游戏状态，匹配全新场景。
-        self.camera = .{};
+        self.camera.resetForRound();
         self.rotation = 0.45;
         self.rotation_speed = 0.85;
     }
@@ -369,7 +369,7 @@ pub const DemoScene = struct {
         if (self.audio) |audio| audio.setVolume(volume01);
     }
 
-    pub fn render(self: *DemoScene, renderer: GpuRenderer, input: *const InputState, dt: f32) !?GpuRenderer.Extent {
+    pub fn render(self: *DemoScene, renderer: GpuRenderer, input: *InputState, dt: f32) !?GpuRenderer.Extent {
         const frame_zone = profiler.begin("Scene frame", @src());
         defer profiler.end(frame_zone);
         const step = @min(dt, 0.05);
@@ -384,7 +384,7 @@ pub const DemoScene = struct {
         if (self.training) |*range| {
             try self.updateTraining(range, input, dt, captured);
         } else if (captured) {
-            self.camera.look(input);
+            self.camera.look(input, captured);
             self.camera.fly(input, step);
         }
         // Finish CPU work, including allocation, before acquiring a swapchain texture.
@@ -413,25 +413,27 @@ pub const DemoScene = struct {
         return frame.extent;
     }
 
-    fn updateTraining(self: *DemoScene, range: *Training, input: *const InputState, dt: f32, captured: bool) !void {
+    fn updateTraining(self: *DemoScene, range: *Training, input: *InputState, dt: f32, captured: bool) !void {
         const zone = profiler.begin("Training update", @src());
         defer profiler.end(zone);
         const physics = &range.demo;
         physics.steps = 0;
         if (physics.phase != .playing) {
+            // 回合结束期间持续清理按住状态，重开后不会残留上一回合的移动/跳跃输入。
+            input.releaseAll();
             if (input.pressed(.interact)) {
                 // Build the replacement before releasing the finished round.
                 const fresh = try PhysicsDemo.init(&self.registry, self.assets.model(self.model).?, self.model, &range.layout);
                 physics.deinit(&self.registry);
                 physics.* = fresh;
-                self.camera = .{};
+                self.camera.resetForRound();
                 self.rotation = 0.45;
                 log.log(.info, "training", "回合重开，{d} 个刚体，弹匣 {d}，生命 100，实体 {d}", .{
                     physics.world.bodyCount(), physics.weapon.rounds, self.registry.entityCount(),
                 });
             }
         } else if (captured) {
-            self.camera.look(input);
+            self.camera.look(input, captured);
             try physics.world.setCharacterInput(.{
                 .strafe = moveAxis(input.isDown(.move_right), input.isDown(.move_left)),
                 .forward = moveAxis(input.isDown(.move_forward), input.isDown(.move_back)),

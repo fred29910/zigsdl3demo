@@ -14,6 +14,27 @@ test {
     _ = navigation;
 }
 
+/// 供角色移动测试复用的平坦地面。
+fn addGroundFloor(world: *physics.World) !void {
+    const floor: [4][3]f32 = .{ .{ -16, 0, -16 }, .{ -16, 0, 16 }, .{ 16, 0, 16 }, .{ 16, 0, -16 } };
+    _ = try world.createBody(.{ .collider = .{ .mesh = .{
+        .vertices = &floor,
+        .indices = &.{ 0, 1, 2, 0, 2, 3 },
+    } } });
+}
+
+/// 在独立世界中施加输入若干步，返回脚点，便于逐方向比较而不互相污染位置。
+fn feetAfter(allocator: std.mem.Allocator, input: physics.CharacterInput, steps: usize) ![3]f32 {
+    var world = try physics.World.init(allocator);
+    defer world.deinit();
+    try addGroundFloor(&world);
+    try world.createCharacter(.{ 0, 0, 0 }, 0.32, 0.58);
+    try world.setCharacterInput(input);
+    for (0..steps) |_| _ = try world.advance(physics.fixed_delta);
+    const feet = world.characterState().?.feet;
+    return .{ feet[0], feet[1], feet[2] };
+}
+
 test "enemy patrols, chases and only attacks after uninterrupted sight" {
     var world = try physics.World.init(testing.allocator);
     defer world.deinit();
@@ -321,4 +342,132 @@ test "static triangle mesh, sphere and capsule use the same filtered query" {
     try testing.expectEqual(ground, hit.body);
     try testing.expectEqual([3]f32{ 1, 0, 0 }, hit.position);
     try testing.expectEqual([3]f32{ 0, 1, 0 }, hit.normal);
+}
+
+test "movement follows view yaw and diagonal speed stays within single-direction speed" {
+    const forward = try feetAfter(testing.allocator, .{ .forward = 1 }, 60);
+    try testing.expectApproxEqAbs(@as(f32, 3), forward[2], 0.03);
+    try testing.expectApproxEqAbs(@as(f32, 0), forward[0], 0.03);
+
+    const left = try feetAfter(testing.allocator, .{ .strafe = -1 }, 60);
+    try testing.expectApproxEqAbs(@as(f32, -3), left[0], 0.03);
+
+    const yawed = try feetAfter(testing.allocator, .{ .forward = 1, .yaw = std.math.pi / 2.0 }, 60);
+    try testing.expectApproxEqAbs(@as(f32, 3), yawed[0], 0.03);
+    try testing.expectApproxEqAbs(@as(f32, 0), yawed[2], 0.03);
+
+    const diagonal = try feetAfter(testing.allocator, .{ .forward = 1, .strafe = 1 }, 60);
+    const distance = @sqrt(diagonal[0] * diagonal[0] + diagonal[2] * diagonal[2]);
+    try testing.expect(distance <= 3 * 1.05);
+    try testing.expect(distance >= 3 * 0.95);
+}
+
+test "sprint raises speed and cancelling input stops movement immediately" {
+    var world = try physics.World.init(testing.allocator);
+    defer world.deinit();
+    try addGroundFloor(&world);
+    try world.createCharacter(.{ 0, 0, 0 }, 0.32, 0.58);
+    try world.setCharacterInput(.{ .forward = 1, .sprint = true });
+    for (0..30) |_| _ = try world.advance(physics.fixed_delta);
+    try testing.expect(world.characterState().?.feet[2] > 3);
+
+    // 取消输入后没有滑行：位置在随后若干步保持不变（瞬间启停）。
+    try world.setCharacterInput(null);
+    const before = world.characterState().?.feet[2];
+    for (0..10) |_| _ = try world.advance(physics.fixed_delta);
+    try testing.expectApproxEqAbs(before, world.characterState().?.feet[2], 0.02);
+}
+
+test "holding jump button only triggers one takeoff" {
+    var world = try physics.World.init(testing.allocator);
+    defer world.deinit();
+    try addGroundFloor(&world);
+    try world.createCharacter(.{ 0, 0, 0 }, 0.32, 0.58);
+    try world.setCharacterInput(.{ .jump_pressed = true });
+    var apex: f32 = 0;
+    var landings: usize = 0;
+    var was_grounded = world.characterState().?.grounded;
+    for (0..180) |_| {
+        // 始终按住跳跃键，但不再产生新的按下边沿。
+        try world.setCharacterInput(.{ .jump_pressed = false });
+        _ = try world.advance(physics.fixed_delta);
+        const character = world.characterState().?;
+        apex = @max(apex, character.feet[1]);
+        if (!was_grounded and character.grounded) landings += 1;
+        was_grounded = character.grounded;
+    }
+    try testing.expect(apex > 1);
+    try testing.expectEqual(@as(usize, 1), landings);
+}
+
+test "null input cancels velocity and pending jump before the next step" {
+    var world = try physics.World.init(testing.allocator);
+    defer world.deinit();
+    try addGroundFloor(&world);
+    try world.createCharacter(.{ 0, 0, 0 }, 0.32, 0.58);
+    try world.setCharacterInput(.{ .forward = 1, .sprint = true, .jump_pressed = true });
+    try world.setCharacterInput(null);
+    const before = world.characterState().?.feet;
+    for (0..30) |_| _ = try world.advance(physics.fixed_delta);
+    const after = world.characterState().?;
+    try testing.expectApproxEqAbs(before[0], after.feet[0], 0.02);
+    try testing.expectApproxEqAbs(before[1], after.feet[1], 0.02);
+    try testing.expectApproxEqAbs(before[2], after.feet[2], 0.02);
+    try testing.expect(after.grounded);
+}
+
+test "backward and right movement mirror forward and left, with zero input staying still" {
+    const back = try feetAfter(testing.allocator, .{ .forward = -1 }, 60);
+    try testing.expectApproxEqAbs(@as(f32, -3), back[2], 0.03);
+    const right = try feetAfter(testing.allocator, .{ .strafe = 1 }, 60);
+    try testing.expectApproxEqAbs(@as(f32, 3), right[0], 0.03);
+    const still = try feetAfter(testing.allocator, .{}, 60);
+    try testing.expectApproxEqAbs(@as(f32, 0), still[0], 0.03);
+    try testing.expectApproxEqAbs(@as(f32, 0), still[2], 0.03);
+}
+
+test "releasing sprint returns to normal speed" {
+    var world = try physics.World.init(testing.allocator);
+    defer world.deinit();
+    try addGroundFloor(&world);
+    try world.createCharacter(.{ 0, 0, 0 }, 0.32, 0.58);
+    try world.setCharacterInput(.{ .forward = 1, .sprint = true });
+    for (0..30) |_| _ = try world.advance(physics.fixed_delta);
+    try testing.expect(world.characterState().?.feet[2] > 3);
+    try world.setCharacterInput(.{ .forward = 1 });
+    const start = world.characterState().?.feet[2];
+    for (0..30) |_| _ = try world.advance(physics.fixed_delta);
+    try testing.expectApproxEqAbs(@as(f32, 1.5), world.characterState().?.feet[2] - start, 0.05);
+}
+
+test "ten separate jump presses produce ten takeoffs" {
+    var world = try physics.World.init(testing.allocator);
+    defer world.deinit();
+    try addGroundFloor(&world);
+    try world.createCharacter(.{ 0, 0, 0 }, 0.32, 0.58);
+    var jumps: usize = 0;
+    var landings: usize = 0;
+    var was_grounded = world.characterState().?.grounded;
+    var armed = true;
+    var steps: usize = 0;
+    while (jumps < 10 or landings < 10) {
+        try testing.expect(steps < 900);
+        steps += 1;
+        if (armed and world.characterState().?.grounded) {
+            try world.setCharacterInput(.{ .jump_pressed = true });
+            jumps += 1;
+            armed = false;
+        } else {
+            try world.setCharacterInput(.{});
+        }
+        _ = try world.advance(physics.fixed_delta);
+        const grounded = world.characterState().?.grounded;
+        if (!was_grounded and grounded) {
+            landings += 1;
+            armed = true;
+        }
+        was_grounded = grounded;
+    }
+    try testing.expectEqual(@as(usize, 10), jumps);
+    try testing.expectEqual(@as(usize, 10), landings);
 }
