@@ -30,6 +30,14 @@ cat build.zig.zon
 | G4 | `zig build test -Ddemo-2d=true` | 通过（exit 0） |
 | G5 | `zig build test -Dclear-only=true` | 通过（exit 0） |
 
+**2026-11-26 重跑 `/speckit.plan` 更新结果（当前锁定状态）**：
+
+- 当前锁定：Jolt v5.7.0、ImGui v1.93.0、stb `6b5799b`、cgltf v1.15、miniaudio 0.11.26、sdl3-zig `aaa5868`（SDL 3.4.20）；`zig version` = 0.17.1。
+- `sh specs/002-upgrade-direct-deps/contracts/check-target-versions.sh` → GREEN（9 项全部通过）。
+- G1–G5（2026-11-26）：`zig build install test`、`zig build install test -Doptimize=ReleaseSafe`、`zig build physics-test`、`zig build test -Ddemo-2d=true`、`zig build test -Dclear-only=true` 全部退出码 0。
+- G6（2026-11-26）：`ZIG_GLOBAL_CACHE_DIR=/tmp/opencode/zig-clean-cache zig build install test --cache-dir /tmp/opencode/zig-clean-local-cache` 退出码 0。
+- 外部网络调研状态：见 [research.md](research.md) P1.1（librarian 查询 2026-11-26 最新正式稳定版结果待回填）。
+
 ### 2. RED：先写检查并看到失败
 
 依据宪章 II，升级前先编写 `specs/002-upgrade-direct-deps/contracts/check-target-versions.sh`，断言目标版本（imgui v1.93.0、jolt v5.7.0、stb 提交 `6b5799b`）与精确锁定规则。运行该脚本，预期在当前版本下**失败（RED）**；将失败输出写入 `specs/002-upgrade-direct-deps/contracts/acceptance-gates.md` 并取得用户确认后，才允许进入下一步。**未确认前不要修改 `build.zig.zon`。**

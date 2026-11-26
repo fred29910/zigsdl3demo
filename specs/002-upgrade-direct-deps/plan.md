@@ -1,22 +1,22 @@
 # Implementation Plan: 升级直接依赖至最新版本
 
-**Branch**: `002-upgrade-direct-deps` | **Date**: 2026-11-25 | **Spec**: [spec.md](spec.md)
+**Branch**: `002-upgrade-direct-deps` | **Date**: 2026-11-26 | **Spec**: [spec.md](spec.md) | **Input**: `/speckit.plan` 重跑于 2026-11-26
 
 **Input**: Feature specification from `/specs/002-upgrade-direct-deps/spec.md`
 
 ## Summary
 
-盘点 `build.zig.zon` 中声明的 6 项直接依赖，逐项检查上游最新版本并判定与锁定的 Zig 0.17.1 工具链及既有验收门禁的兼容性。对兼容者以精确版本/提交与固定哈希升级；对无兼容更新者保持原样并记录理由。升级完成后全部既有门禁通过、干净环境可离线构建，并在 README 留下「原版本 → 新版本/保持原样 + 理由」的可追溯记录。工具链版本、已验收的玩法与不变量均不改变。
+盘点 `build.zig.zon` 中声明的 6 项直接依赖（2026-11-26 现状：Jolt v5.7.0、ImGui v1.93.0、stb `6b5799b` 已落地，其余为 cgltf v1.15、miniaudio 0.11.26、sdl3-zig `aaa5868`），逐项检查上游最新版本并判定与锁定的 Zig 0.17.1 工具链及既有验收门禁的兼容性（`research.md` 上游对比已由 librarian 后台调研 2026-11-26 结果入库，与独立 websearch 一致）。对兼容者以精确版本/提交与固定哈希升级；对无兼容更新者保持原样并记录理由。升级完成后全部既有门禁通过、干净环境可离线构建（G1–G6 均已 2026-11-26 实测退出码 0），并在 README 留下「原版本 → 新版本/保持原样 + 理由」的可追溯记录。工具链版本、已验收的玩法与不变量均不改变。
 
 ## Technical Context
 
 **Language/Version**: Zig 0.17.1（精确锁定，`build.zig` 以 `@compileError` 校验，不得变更）
 
-**Primary Dependencies**: SDL 3.4.20（经 `fred29910/sdl3-zig` 提交 `aaa5868` 绑定）、Jolt Physics v5.5.0、Dear ImGui v1.92.5、cgltf v1.15、stb 提交 `f0569113`、miniaudio 0.11.26；Tracy v0.12.2 为可选外部源码（经 `-Dtracy-source` 启用，不在依赖清单中）
+**Primary Dependencies**（`build.zig.zon` 2026-11-26 现状，已含升级落地）: SDL 3.4.20（经 `fred29910/sdl3-zig` 提交 `aaa5868464855ab0bda4dffe1cf424709f665669` 绑定）、Jolt Physics v5.7.0、Dear ImGui v1.93.0、cgltf v1.15、stb 提交 `6b5799b`、miniaudio 0.11.26；Tracy v0.12.2 为可选外部源码（经 `-Dtracy-source` 启用，不在依赖清单中）
 
 **Storage**: 无持久化存储；GLB 与 SPIR-V 嵌入可执行文件，外部资源按相对路径读取
 
-**Testing**: `zig build install test`、`zig build install test -Doptimize=ReleaseSafe`、`zig build physics-test`、`zig build test -Ddemo-2d=true`、`zig build test -Dclear-only=true`；另需干净环境离线构建验证
+**Testing**（2026-11-26 实跑结果：G1–G5 全部退出码 0；G6 用全新 `ZIG_GLOBAL_CACHE_DIR=/tmp/opencode/zig-clean-cache` + `--cache-dir /tmp/opencode/zig-clean-local-cache` 构建退出码 0）: `zig build install test`、`zig build install test -Doptimize=ReleaseSafe`、`zig build physics-test`、`zig build test -Ddemo-2d=true`、`zig build test -Dclear-only=true`；另需干净环境离线构建验证
 
 **Target Platform**: Linux 桌面为验收基线（Xvfb + Mesa Lavapipe 软件 Vulkan）；Windows/macOS 由依赖支持但不在本功能验证范围
 
@@ -26,7 +26,7 @@
 
 **Constraints**: Zig 版本与全部依赖哈希精确锁定；不得引入浮动版本；升级后必须离线干净构建；不得改变 glTF 支持边界、物理与相机不变量（1/60s 步长、每帧最多 6 步、相机 1.6m、最近碰撞射线）与缓存语义；文档语言为中文
 
-**Scale/Scope**: 6 项直接依赖，其中 3 项存在上游更新（Jolt、ImGui、stb），3 项已是最新（cgltf、miniaudio、sdl3-zig/SDL）
+**Scale/Scope**: 6 项直接依赖；`build.zig.zon` 2026-11-26 现状需核对（Jolt v5.7.0、ImGui v1.93.0、stb `6b5799b` 已锁），剩余依赖（cgltf、miniaudio、sdl3-zig/SDL）与上游无已知新版
 
 ## Constitution Check
 
@@ -39,11 +39,11 @@
 | III. 增量改动与零回归 | PASS | 逐项升级、逐项验证；失败回退到最后通过门禁的版本；不修改生成物目录 |
 | IV. 资源生命周期与确定性状态 | PASS | 不触及场景资源生命周期、缓存语义与物理/相机不变量 |
 | V. 简洁克制与边界清晰 | PASS | 仅版本与哈希变更，不新增功能、不改变支持边界 |
-| 图形/物理/着色器不变量 | PASS | 不改 HLSL/SPIR-V；Jolt 升级若破坏 1/60s 步长等不变量则回退 |
+| 图形/物理/着色器不变量 | PASS | 不改 HLSL/SPIR-V；Jolt v5.7.0 归档目录已在 `build.zig` 适配为 `JoltPhysics-5.7.0/` 路径（T016 记录），未引用已移除的 `PhysicsSettings::mDeterministicSimulation` / `JPH_USE_STD_VECTOR`；若升级破坏 1/60s 步长等不变量则回退 |
 
 **结论**：无违规，无需 Complexity Tracking。
 
-**Phase 1 设计后复核**：PASS — 设计产物未引入工具链变更、浮动引用或不变量改动；候选升级均以门禁判定与逐项回退为边界，`zig fetch` 命令已按 Zig 0.17.1 实际接口校正；已补充显式 RED-GREEN 任务序列（T011/T012 → T013–T019），满足宪章 II。
+**Phase 1 设计后复核**：PASS（2026-11-26）— 设计产物（`research.md`、`data-model.md`、`contracts/`、`quickstart.md`）未引入工具链变更、浮动引用或不变量改动；`librarian`（后台调研 2026-11-26）与独立 websearch 双重确认：6 项直接依赖均已锁定于上游当前最新稳定状态，无可用更新（见 `research.md` R1 上游对比表）。双议一致记录在 `research.md` 结论与 `contracts/acceptance-gates.md` 2026-11-26 刷新记录。
 
 ## Project Structure
 

@@ -31,6 +31,8 @@
 - 缓存语义：文件资源按规范绝对路径缓存，内嵌资源按名称缓存，默认训练场出现 `缓存命中 embedded:demo.glb`。
 - HLSL 与已提交 SPIR-V 保持同步；本功能不改着色器。
 
+- **2026-11-26 重跑刷新记录**：当前锁定（Jolt v5.7.0、ImGui v1.93.0、stb `6b5799b`、cgltf v1.15、miniaudio 0.11.26、sdl3-zig `aaa5868`，Zig 0.17.1）全部满足 `check-target-versions.sh` GREEN；G1–G6（含 G6 干净全局缓存构建）全部退出码 0，详见 [quickstart.md](quickstart.md)。
+
 ## RED 阶段记录（T011/T012，2026-11-25）
 
 - T011 已编写 `specs/002-upgrade-direct-deps/contracts/check-target-versions.sh`，断言 imgui v1.93.0 / jolt v5.7.0 / stb `6b5799b` 的精确 URL 与哈希，以及 Zig 0.17.1、无浮动引用、5 项 lazy 标记。
