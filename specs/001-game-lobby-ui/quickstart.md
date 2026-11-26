@@ -62,6 +62,19 @@ zig build run
 2. 任一模式初始化失败（图形设备不可用、音频设备缺失、模型加载失败）：显示可读错误并停留大厅，可重试或改选，程序不退出。
 3. 连续快速点击多个模式入口：只进入最后确认的一个模式，不出现多次初始化或窗口冲突。
 
+### V7 返回大厅稳定性回归（bug: lobby-mode-switch-crash）
+
+针对广告 `wp_fifo_manager_v1` 的 Wayland 合成器（Xvfb/X11 基线无法复现，需在真实 Wayland 桌面或 `WAYLAND_DISPLAY` 可用的环境执行）：
+
+```sh
+zig build run
+```
+
+1. 在 lobby 选中「2D 输入演示」并确认，进入 demo_2d；按 Esc 返回大厅，反复 5 轮。
+2. 在 lobby 选中「外部模型预览」→ 填有效 GLB → 加载进入 viewer；按 Esc 返回大厅，反复 5 轮。
+3. 断言：进程始终存活；日志无 `wp_fifo_manager_v1 … get_fifo` 协议错误、无 `Wayland display connection closed by server (fatal)`、无 `[ERROR] gpu: 获取交换链图像失败`；离开 2D 模式时应出现 `已释放 2D 渲染器`。
+4. 断言：`缓存命中 embedded:demo.glb` 仍在首次启动时出现；再次进入训练场的角色、靶板与机器人状态为初始状态。
+
 ## 完成判定
 
 - SC-001：启动到开始操作训练场 ≤2 次选择且 <3 秒。

@@ -135,6 +135,16 @@ pub fn main(init: std.process.Init) !void {
                                 log.log(.error_, "scene", "恢复内嵌训练场失败 ({s})", .{@errorName(err)});
                                 lobby.setNotice(&session, "恢复训练场失败，请重试。");
                             }
+                        } else if (session.view == .demo_2d) {
+                            // 离开 2D 模式时释放软件渲染器，避免它与 GPU 设备同时持有
+                            // 同一 Wayland surface（会触发 wp_fifo_manager_v1 协议错误）。
+                            if (input.mouseCaptured()) setCapture(&input, false);
+                            if (renderer_2d) |r| {
+                                r.deinit();
+                                renderer_2d = null;
+                                log.log(.info, "lobby", "已释放 2D 渲染器", .{});
+                            }
+                            lobby.returnToLobby(&session);
                         } else {
                             lobby.returnToLobby(&session);
                         }
