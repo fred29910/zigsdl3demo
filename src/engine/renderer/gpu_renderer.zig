@@ -1,4 +1,5 @@
 //! M2 SDL GPU swapchain clear. Use on the window's owning thread.
+const std = @import("std");
 const builtin = @import("builtin");
 const sdl = @import("sdl3");
 const Logger = @import("zigsdl3demo").Logger;
@@ -74,8 +75,21 @@ pub const GpuRenderer = struct {
             log.log(.error_, "gpu", "获取命令缓冲失败: {s}", .{sdl.lastErrorText()});
             return err;
         };
+        // clearError 保证本次 waitAndAcquire 失败时读到的是本次调用产生的错误文本，
+        // 而不是上一次 SDL 调用遗留的旧信息。
+        sdl.clearError();
         const swapchain = commands.waitAndAcquireSwapchainTexture(self.window) catch |err| {
-            log.log(.error_, "gpu", "获取交换链图像失败: {s}", .{sdl.lastErrorText()});
+            // 必须在 cancel(commands) 之前读取并分类：cancel 是 SDL 调用，
+            // 会覆盖 lastErrorText() 中的错误文本。
+            const message = sdl.lastErrorText();
+            if (isTransientSwapchainError(message)) {
+                // 瞬时 surface 丢失/过期/次优：跳过本帧，让 SDL 的
+                // needsSurfaceRecreate/needsSwapchainRecreate 在下一帧恢复。
+                log.log(.warn, "gpu", "交换链暂时不可用，跳过本帧: {s}", .{message});
+                cancel(commands) catch {};
+                return null;
+            }
+            log.log(.error_, "gpu", "获取交换链图像失败: {s}", .{message});
             cancel(commands) catch {};
             return err;
         };
@@ -109,4 +123,20 @@ fn cancel(commands: *sdl.gpu.CommandBuffer) !void {
         log.log(.error_, "gpu", "取消命令缓冲失败: {s}", .{sdl.lastErrorText()});
         return err;
     };
+}
+
+/// 判断 SDL/Vulkan 返回的错误文本是否属于可恢复的瞬时交换链错误。
+/// SDL Zig 绑定把所有失败都折叠为 error.SdlError，因此必须通过错误文本分类。
+pub fn isTransientSwapchainError(message: []const u8) bool {
+    return std.mem.indexOf(u8, message, "VK_ERROR_SURFACE_LOST_KHR") != null or
+        std.mem.indexOf(u8, message, "VK_ERROR_OUT_OF_DATE_KHR") != null or
+        std.mem.indexOf(u8, message, "VK_SUBOPTIMAL_KHR") != null;
+}
+
+test "isTransientSwapchainError" {
+    try std.testing.expect(isTransientSwapchainError("vkGetPhysicalDeviceSurfaceFormatsKHR VK_ERROR_SURFACE_LOST_KHR"));
+    try std.testing.expect(isTransientSwapchainError("VK_ERROR_OUT_OF_DATE_KHR"));
+    try std.testing.expect(isTransientSwapchainError("something VK_SUBOPTIMAL_KHR else"));
+    try std.testing.expect(!isTransientSwapchainError("generic SDL error"));
+    try std.testing.expect(!isTransientSwapchainError(""));
 }

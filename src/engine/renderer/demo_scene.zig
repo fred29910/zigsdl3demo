@@ -117,6 +117,7 @@ pub const LobbyAction = enum(u8) { none, training, preview, demo_2d, clear_only,
 pub const LobbyRender = struct { extent: GpuRenderer.Extent, action: LobbyAction };
 
 pub const DemoScene = struct {
+    allocator: std.mem.Allocator,
     registry: scene.Registry,
     queue: RenderQueue,
     assets: assets.AssetManager,
@@ -200,6 +201,7 @@ pub const DemoScene = struct {
             lighting.shadow_size,   @tagName(environment.shadow_format),
         });
         return .{
+            .allocator = allocator,
             .registry = registry,
             .queue = RenderQueue.init(allocator),
             .assets = manager,
@@ -220,6 +222,83 @@ pub const DemoScene = struct {
             },
             .depth_format = depth_format,
         };
+    }
+
+    pub fn reloadModel(self: *DemoScene, io: std.Io, path: ?[]const u8) !void {
+        const allocator = self.allocator;
+        const device = self.device;
+
+        // 先在局部变量中构建全部新模型侧资源，任一步失败都不触碰旧场景。
+        var new_manager = try assets.AssetManager.init(allocator, device);
+        errdefer new_manager.deinit();
+
+        const new_model = loadSceneAsset(&new_manager, io, path) catch |err| {
+            log.log(.error_, "assets", "加载 {s} 失败: {s}", .{ path orelse "demo.glb", @errorName(err) });
+            return err;
+        };
+        // 保留内嵌 GLB 的共享缓存语义：第二次请求应命中缓存。
+        const cached = try loadSceneAsset(&new_manager, io, path);
+        try new_manager.releaseModel(cached);
+
+        var new_registry = scene.Registry.init(allocator);
+        errdefer new_registry.deinit();
+
+        var new_instance = try Instance.init(&new_registry, &new_manager, new_model);
+        errdefer new_instance.deinit(&new_registry);
+
+        const spinning = if (path == null) new_instance.first_root else null;
+        var new_spin_base = if (spinning) |entity| new_registry.get(entity, transform.Transform).?.matrix() else (transform.Transform{}).matrix();
+        if (spinning != null) {
+            // Keep the animated display above the walkable training area.
+            new_spin_base.rows[1][3] += 2.2;
+            const triangle = new_instance.node_entities[1];
+            var display = new_registry.get(triangle, transform.Transform).?.matrix();
+            display.rows[1][3] += 2.4;
+            try new_registry.add(triangle, transform.Transform{ .local_matrix = display });
+            // The authored range supplies its own floor. Keep the old quad in the model viewer.
+            try new_registry.remove(new_instance.node_entities[2], MeshRenderer);
+        }
+
+        var new_training = if (path == null) try Training.init(&new_manager, &new_registry, io, new_model) else null;
+        errdefer if (new_training) |*range| range.deinit(&new_manager, &new_registry);
+
+        const new_audio = if (new_training != null) DemoAudio.init() else null;
+        if (new_training) |*range| {
+            log.log(.info, "physics", "Jolt 已就绪，{d} 个刚体，步长 1/60 秒", .{range.demo.world.bodyCount()});
+            if (new_audio != null)
+                log.log(.info, "audio", "miniaudio 播放已就绪", .{})
+            else
+                log.log(.warn, "audio", "音频初始化失败，以静音模式运行训练场", .{});
+        }
+        log.log(.info, "scene", "导入场景已就绪，实体 {d}，深度格式 {s}，阴影图 {d}x{d} {s}", .{
+            new_registry.entityCount(), @tagName(self.depth_format),
+            lighting.shadow_size, lighting.shadow_size, @tagName(self.environment.shadow_format),
+        });
+
+        // 全部新资源构建成功后，再释放旧模型侧资源并提交。
+        if (self.audio) |audio| audio.deinit();
+        self.device.waitForIdle() catch {
+            log.log(.warn, "scene", "等待 GPU 空闲失败: {s}", .{sdl.lastErrorText()});
+        };
+        if (self.training) |*range| range.deinit(&self.assets, &self.registry);
+        self.instance.deinit(&self.registry);
+        self.registry.deinit();
+        self.assets.releaseModel(self.model) catch unreachable;
+        self.assets.deinit();
+
+        self.assets = new_manager;
+        self.model = new_model;
+        self.registry = new_registry;
+        self.instance = new_instance;
+        self.training = new_training;
+        self.audio = new_audio;
+        self.spinning_cube = spinning;
+        self.spin_base = new_spin_base;
+
+        // 重置每场景游戏状态，匹配全新场景。
+        self.camera = .{};
+        self.rotation = 0.45;
+        self.rotation_speed = 0.85;
     }
 
     pub fn deinit(self: *DemoScene) void {

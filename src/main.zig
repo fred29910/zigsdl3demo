@@ -127,15 +127,17 @@ pub fn main(init: std.process.Init) !void {
                         // 独立构建（2D/清屏）无大厅 UI，保持原有退出行为。
                         if (!show_scene) break :loop;
                         if (session.view == .lobby) continue;
-                        // 从外部模型查看返回时，用内嵌模型重建场景，避免旧模型残留。
+                        // 从外部模型查看返回时，仅重建模型侧资源，保留 GPU/ImGui 后端。
                         if (session.view == .viewer) {
-                            scene.deinit();
-                            scene = DemoScene.init(renderer, init.gpa, init.io, null) catch |err| {
+                            const reload_result = scene.reloadModel(init.io, null);
+                            lobby.returnToLobby(&session);
+                            if (reload_result) |_| {} else |err| {
                                 log.log(.error_, "scene", "恢复内嵌训练场失败 ({s})", .{@errorName(err)});
-                                break :loop;
-                            };
+                                lobby.setNotice(&session, "恢复训练场失败，请重试。");
+                            }
+                        } else {
+                            lobby.returnToLobby(&session);
                         }
-                        lobby.returnToLobby(&session);
                         log.log(.info, "lobby", "返回大厅", .{});
                     }
                     if (e.scancode == .tab and !e.repeat and !minimized)
@@ -171,12 +173,10 @@ pub fn main(init: std.process.Init) !void {
                             if (path.len == 0) {
                                 lobby.setNotice(&session, "请输入模型文件路径。");
                             } else {
-                                scene.deinit();
-                                scene = DemoScene.init(renderer, init.gpa, init.io, path) catch |err| {
+                                scene.reloadModel(init.io, path) catch |err| {
                                     log.log(.error_, "scene", "模型加载失败 ({s}): {s}", .{ @errorName(err), sdl.lastErrorText() });
-                                    scene = DemoScene.init(renderer, init.gpa, init.io, null) catch return err;
-                                    lobby.setNotice(&session, "模型加载失败，请检查路径及其引用的 .bin 与纹理是否完整。");
                                     lobby.returnToLobby(&session);
+                                    lobby.setNotice(&session, "模型加载失败，请检查路径及其引用的 .bin 与纹理是否完整。");
                                     continue;
                                 };
                                 session.view = .viewer;
