@@ -136,8 +136,8 @@ pub fn main(init: std.process.Init) !void {
                                 lobby.setNotice(&session, "恢复训练场失败，请重试。");
                             }
                         } else if (session.view == .demo_2d) {
-                            // 离开 2D 模式时释放软件渲染器，避免它与 GPU 设备同时持有
-                            // 同一 Wayland surface（会触发 wp_fifo_manager_v1 协议错误）。
+                            // 离开 2D 模式时释放软件渲染器，再重建 GPU surface/交换链。
+                            // 仅销毁软件渲染器不足以恢复已被污染的 Wayland surface 绑定。
                             if (input.mouseCaptured()) setCapture(&input, false);
                             if (renderer_2d) |r| {
                                 r.deinit();
@@ -145,6 +145,10 @@ pub fn main(init: std.process.Init) !void {
                                 log.log(.info, "lobby", "已释放 2D 渲染器", .{});
                             }
                             lobby.returnToLobby(&session);
+                            renderer.reclaimWindowFrom2d() catch |err| {
+                                log.log(.error_, "gpu", "恢复 GPU 窗口绑定失败 ({s})", .{@errorName(err)});
+                                lobby.setNotice(&session, "恢复图形设备失败，请重试。");
+                            };
                         } else {
                             lobby.returnToLobby(&session);
                         }
@@ -220,11 +224,17 @@ pub fn main(init: std.process.Init) !void {
                         .preview => enterMode(&session, .preview, now_ns),
                         .clear_only => enterMode(&session, .clear_only, now_ns),
                         .demo_2d => {
+                            // 先让 GPU 设备释放窗口，避免软件渲染器与 GPU 交换链
+                            // 同时持有同一 Wayland surface。
+                            renderer.releaseWindowFor2d();
                             if (renderer_2d == null)
                                 renderer_2d = sdl.Renderer.init(window, "software") catch null;
                             if (renderer_2d != null) {
                                 enterMode(&session, .demo_2d, now_ns);
                             } else {
+                                renderer.reclaimWindowFrom2d() catch |err| {
+                                    log.log(.error_, "gpu", "恢复 GPU 窗口绑定失败 ({s})", .{@errorName(err)});
+                                };
                                 lobby.setNotice(&session, "图形设备初始化失败，无法启动 2D 输入演示。");
                             }
                         },

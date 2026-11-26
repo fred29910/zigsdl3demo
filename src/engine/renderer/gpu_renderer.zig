@@ -10,6 +10,8 @@ const clear_color: sdl.FColor = .{ .r = 0.1, .g = 0.2, .b = 0.4, .a = 1.0 };
 pub const GpuRenderer = struct {
     device: *sdl.gpu.Device,
     window: sdl.Window,
+    /// 创建管线与 ImGui 时使用的交换链格式；重建 surface 后用于校验一致性。
+    color_format: sdl.gpu.TextureFormat,
 
     pub const Extent = struct { width: u32, height: u32 };
 
@@ -55,10 +57,40 @@ pub const GpuRenderer = struct {
             return err;
         };
 
+        const color_format = device.swapchainTextureFormat(window);
         log.log(.info, "gpu", "后端 {s}，支持 SPIR-V，交换链格式 {s}", .{
-            device.driver(), @tagName(device.swapchainTextureFormat(window)),
+            device.driver(), @tagName(color_format),
         });
-        return .{ .device = device, .window = window };
+        return .{ .device = device, .window = window, .color_format = color_format };
+    }
+
+    /// 进入 2D 演示前释放窗口绑定：SDL 会销毁交换链与 VkSurfaceKHR，
+    /// 使软件渲染器能独立接管该窗口的 Wayland surface。
+    pub fn releaseWindowFor2d(self: GpuRenderer) void {
+        self.device.waitForIdle() catch {
+            log.log(.warn, "gpu", "释放窗口前等待设备空闲失败: {s}", .{sdl.lastErrorText()});
+        };
+        self.device.releaseWindow(self.window);
+        log.log(.info, "gpu", "已释放 GPU 窗口绑定（进入 2D 演示）", .{});
+    }
+
+    /// 离开 2D 演示后重建 surface 与交换链，校验格式未变，否则管线与 ImGui 会失配。
+    pub fn reclaimWindowFrom2d(self: GpuRenderer) !void {
+        self.device.claimWindow(self.window) catch |err| {
+            log.log(.error_, "gpu", "重新声明窗口失败: {s}", .{sdl.lastErrorText()});
+            return err;
+        };
+        errdefer self.device.releaseWindow(self.window);
+        self.device.setSwapchainParameters(self.window, .sdr, .vsync) catch |err| {
+            log.log(.error_, "gpu", "重新配置交换链失败: {s}", .{sdl.lastErrorText()});
+            return err;
+        };
+        const format = self.device.swapchainTextureFormat(self.window);
+        if (format != self.color_format) {
+            log.log(.error_, "gpu", "交换链格式变化: {s} -> {s}", .{ @tagName(self.color_format), @tagName(format) });
+            return error.SwapchainFormatChanged;
+        }
+        log.log(.info, "gpu", "已重建 GPU surface 与交换链（返回大厅）", .{});
     }
 
     pub fn deinit(self: GpuRenderer) void {
