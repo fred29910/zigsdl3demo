@@ -8,7 +8,7 @@ comptime {
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
+    const optimize = optimizeOption(b);
     const demo_2d = b.option(bool, "demo-2d", "Run the M1 SDL 2D input demo") orelse false;
     const clear_only = b.option(bool, "clear-only", "Run the M2 Vulkan clear demo") orelse false;
     const tracy = b.option([]const u8, "tracy-source", "Enable local profiling with a Tracy v0.12.2 source checkout");
@@ -110,6 +110,25 @@ pub fn build(b: *std.Build) void {
         const tests = b.addTest(.{ .root_module = module });
         test_step.dependOn(&b.addRunArtifact(tests).step);
     }
+}
+
+/// 优化模式选择：显式 `-Doptimize` 优先；否则 `--release=<mode>` 使用对应模式；
+/// 裸 `--release` 使用 ReleaseSafe；其余为 Debug。
+fn optimizeOption(b: *std.Build) std.builtin.Optimize {
+    if (b.option(std.builtin.Optimize, "optimize", "Prioritize performance, safety, or binary size")) |mode| {
+        return mode;
+    }
+    const release_requested = (b.option(bool, "release", "optimize for end users") orelse false) or
+        (b.graph.release_mode != .off);
+    if (release_requested) {
+        return switch (b.graph.release_mode) {
+            .fast => .ReleaseFast,
+            .safe => .ReleaseSafe,
+            .small => .ReleaseSmall,
+            .any, .off => .ReleaseSafe,
+        };
+    }
+    return .Debug;
 }
 
 fn configurePhysics(b: *std.Build, jolt: *std.Build.Dependency, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) struct {

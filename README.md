@@ -66,6 +66,8 @@ zig build run
 | `zig build run -Dclear-only=true` | 启动 M2 Vulkan 深蓝色清屏，检查设备和交换链 |
 | `zig build` | 安装 Debug 可执行文件到 `zig-out/bin/zigsdl3demo` |
 | `zig build -Doptimize=ReleaseSafe` | 构建带运行时安全检查的发布版本 |
+| `zig build --release` | 发布模式（默认 ReleaseSafe），仅输出 info 及以上日志 |
+| `zig build --release=safe|fast|small` | 指定发布子模式，均仅输出 info 及以上日志 |
 | `zig build --help` | 查看构建步骤、目标选项和安装路径 |
 
 两种基础演示模式应分别启动。各自的构建会跳过 Jolt、资产导入、ImGui 和 miniaudio 的场景集成。使用 `--prefix` 可为不同配置指定独立的输出目录。下例将 ReleaseSafe 安装到单独的目录，默认目录可继续用于 Debug。
@@ -76,6 +78,12 @@ zig build -Doptimize=ReleaseSafe --prefix zig-out/release
 ```
 
 发布版将 GLB 和 SPIR-V 嵌入可执行文件，可从任意当前目录直接启动。Tracy 通过 `-Dtracy-source` 单独启用。
+
+优化模式优先级：显式 `-Doptimize=...` 优先；否则 `--release=<mode>` 使用对应模式；裸 `--release` 使用 ReleaseSafe；其余为 Debug。`-Doptimize=Debug` 与 `--release` 同时出现时以显式 `-Doptimize` 为准，按 Debug 非发布处理。
+
+### 日志级别
+
+日志在编译期按构建模式设定最低级别：Debug 构建允许输出 `debug / info / warn / error`，发布构建（`--release` 或 `-Doptimize=ReleaseSafe/ReleaseFast/ReleaseSmall`）只输出 `info / warn / error`。`Logger.init(info)` 等运行时阈值只能提高门槛，不能在发布构建中重新打开 debug。新增 debug 日志时，若参数昂贵或可能有副作用，调用点须用 `Logger.enabledComptime(.debug)` 做编译期保护；现有调用点均不受影响。输出仍为 stderr 的 `[LEVEL] module: message` 格式，不引入运行时环境变量或配置文件。
 
 ## 游戏大厅
 
@@ -195,10 +203,13 @@ zig build run
 
 ```sh
 zig build install test
+zig build install test --release
 zig build install test -Doptimize=ReleaseSafe
 zig build physics-test
 zig build test -Ddemo-2d=true
 zig build test -Dclear-only=true
+zig build test -Ddemo-2d=true --release
+zig build test -Dclear-only=true --release
 ```
 
 `zig build test` 覆盖基础设施、SDL 输入、场景句柄、父子变换、Render Queue、glTF 导入和物理。`zig build physics-test` 可独立验证碰撞、角色贴地和跳跃、射线与武器、路点绕障、机器人追击与遮挡中断攻击，无需窗口或 GPU。
@@ -253,7 +264,7 @@ timeout --preserve-status --kill-after=2s 3s env \
 | M10 HUD / 音效 | 验证 HUD 随窗口缩放，释放鼠标隐藏准星。隔离 ALSA 输出捕获 7 次开火声，其中 5 次有额外命中音 |
 | M11 Demo / Hardening | Blender 场地、机器人状态机与路点、胜负结算与重开、ReleaseSafe 发布构建及 [Tracy 采样](docs/M11_Performance.md) |
 
-默认 Debug、ReleaseSafe、2D 和清屏配置均通过构建与测试。交互与音频记录来自 Linux 虚拟显示、软件 Vulkan 与隔离音频输出。实体 GPU、真实桌面窗口管理器和物理播放设备尚待实机验证。发布标签以 `git tag --list` 为准。
+默认 Debug、`--release`/ReleaseSafe、2D 和清屏配置均通过构建与测试；发布构建仅输出 info 及以上日志，Debug 构建允许输出 debug。交互与音频记录来自 Linux 虚拟显示、软件 Vulkan 与隔离音频输出。实体 GPU、真实桌面窗口管理器和物理播放设备尚待实机验证。发布标签以 `git tag --list` 为准。
 
 ## 常见问题
 
