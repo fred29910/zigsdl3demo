@@ -24,7 +24,7 @@ check() {
 check "imgui 固定到 v1.93.0" has "imgui/archive/refs/tags/v1.93.0.tar.gz"
 check "imgui 哈希精确锁定" has "N-V-__8AAEVjfgCU7hthaWtlDkNjFB4HE1XYqFl6UO7oqXwD"
 check "jolt 固定到 v5.7.0" has "JoltPhysics/archive/refs/tags/v5.7.0.tar.gz"
-check "jolt 哈希精确锁定" has "N-V-__8AAJgyLAKn0VQnc3MlGUbJ7hXrEJNoZ4uxMLtBWrxJ"
+check "jolt 哈希精确锁定" has "N-V-__8AAJgyLAL_wh69ee1vC-XK3z_zAims-XlafozU6HDG"
 check "stb 固定到提交 6b5799b" has "stb/archive/6b5799bae8a1fe3792691ef4b72ae26434c3e799.tar.gz"
 check "stb 哈希精确锁定" has "N-V-__8AAMNjVQBtQqFTqLXf4ajZ6COgMe1AG_STJHG4jkdj"
 check "Zig 工具链仍为 0.17.1" has 'minimum_zig_version = "0.17.1"'

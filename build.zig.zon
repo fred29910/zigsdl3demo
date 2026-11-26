@@ -34,7 +34,7 @@
     .dependencies = .{
         .jolt = .{
             .url = "https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.7.0.tar.gz",
-            .hash = "N-V-__8AAJgyLAKn0VQnc3MlGUbJ7hXrEJNoZ4uxMLtBWrxJ",
+            .hash = "N-V-__8AAJgyLAL_wh69ee1vC-XK3z_zAims-XlafozU6HDG",
             .lazy = true,
         },
         .cgltf = .{
@@ -43,8 +43,8 @@
             .lazy = true,
         },
         .stb = .{
-            .url = "https://github.com/nothings/stb/archive/f0569113c93ad095470c54bf34a17b36646bbbb5.tar.gz",
-            .hash = "N-V-__8AAJopTgBuYbPPno6GEtqFAeIhKHyhTJcJ-Vp2FpHj",
+            .url = "https://github.com/nothings/stb/archive/6b5799bae8a1fe3792691ef4b72ae26434c3e799.tar.gz",
+            .hash = "N-V-__8AAMNjVQBtQqFTqLXf4ajZ6COgMe1AG_STJHG4jkdj",
             .lazy = true,
         },
         .imgui = .{

@@ -49,3 +49,44 @@
   ```
 - 用户已于 2026-11-25 明确批准越过 RED 门禁，开始 T013–T021 升级实现。
 - 结论：当前版本尚未满足目标检查；按宪章 II，用户批准后开始升级实现。
+
+## 升级执行记录（T013–T021，2026-11-26）
+
+### T013–T015 imgui v1.92.5 → v1.93.0
+- URL: `https://github.com/ocornut/imgui/archive/refs/tags/v1.93.0.tar.gz`
+- Hash: `N-V-__8AAEVjfgCU7hthaWtlDkNjFB4HE1XYqFl6UO7oqXwD`（`zig fetch` 产物）
+- 门禁：
+  - `zig build install test` → exit 0（G1）
+  - `zig build install test -Doptimize=ReleaseSafe` → exit 0（G2）
+  - `zig build test -Ddemo-2d=true` → exit 0（G4）
+  - `zig build test -Dclear-only=true` → exit 0（G5）
+
+### T016–T018 jolt v5.5.0 → v5.7.0
+- URL: `https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.7.0.tar.gz`
+- Hash: `N-V-__8AAJgyLAL_wh69ee1vC-XK3z_zAims-XlafozU6HDG`（`zig build` 实际获取/校验通过的固定哈希）
+- 构建适配：Jolt v5.7.0 归档在本工具链下以未剥离根目录 `JoltPhysics-5.7.0/` 形式落地，因此在 `build.zig` 的 `configurePhysics()` 中将 `Jolt/Jolt.cmake`、include 路径与 C 源根路径调整为 `JoltPhysics-5.7.0/...`。未修改 `src/`，且未引用已移除的 `PhysicsSettings::mDeterministicSimulation` / `JPH_USE_STD_VECTOR`。
+- 门禁：
+  - `zig build install test` → exit 0（G1）
+  - `zig build install test -Doptimize=ReleaseSafe` → exit 0（G2）
+  - `zig build physics-test` → exit 0（G3）
+
+### stb f056911 → 6b5799b
+- URL: `https://github.com/nothings/stb/archive/6b5799bae8a1fe3792691ef4b72ae26434c3e799.tar.gz`
+- Hash: `N-V-__8AAMNjVQBtQqFTqLXf4ajZ6COgMe1AG_STJHG4jkdj`（`zig fetch` 产物）
+- 门禁：
+  - `zig build install test` → exit 0（G1）
+  - `zig build install test -Doptimize=ReleaseSafe` → exit 0（G2）
+
+### T019 目标版本检查
+- `sh specs/002-upgrade-direct-deps/contracts/check-target-versions.sh` → exit 0（GREEN）。
+
+### T020 最终门禁（最终状态）
+- `zig build install test` → exit 0（G1）
+- `zig build install test -Doptimize=ReleaseSafe` → exit 0（G2）
+- `zig build physics-test` → exit 0（G3）
+- `zig build test -Ddemo-2d=true` → exit 0（G4）
+- `zig build test -Dclear-only=true` → exit 0（G5）
+
+### T021 离线/可复现构建
+- 使用全新全局缓存目录 `/tmp/opencode/zig-global-cache-final` 执行 `zig build install test` → exit 0；验证了在干净全局缓存下可重新下载并构建。
+- 限制：本次验证在当前环境可联网；未在真正断网条件下执行，因此 G6 的“无网络”部分未严格验证，仅验证了干净缓存目录复现。

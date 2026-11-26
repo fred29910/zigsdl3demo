@@ -77,19 +77,19 @@ description: "Tasks for upgrading direct dependencies to latest compatible versi
 ### RED — 先写检查并看到失败（宪章 II）
 
 - [X] T011 [US2] 编写目标版本检查脚本 `specs/002-upgrade-direct-deps/contracts/check-target-versions.sh`：断言 `build.zig.zon` 中 imgui 为 v1.93.0、jolt 为 v5.7.0、stb 为提交 `6b5799b`，且所有 `.url` 为不可变引用、`.hash` 非空、`lazy` 与 `minimum_zig_version = "0.17.1"` 未变（依据 data-model.md `直接依赖.来源类型`、`直接依赖.当前内容哈希`）。**本任务在升级前完成，不得同时修改 `build.zig.zon`**
-- [ ] T012 [US2] 运行 `specs/002-upgrade-direct-deps/contracts/check-target-versions.sh`，确认在当前版本下检查**失败（RED）**；将失败输出与用户确认记录到 `specs/002-upgrade-direct-deps/contracts/acceptance-gates.md`。**未获得用户确认前不得开始 T013**
+- [X] T012 [US2] 运行 `specs/002-upgrade-direct-deps/contracts/check-target-versions.sh`，确认在当前版本下检查**失败（RED）**；将失败输出与用户确认记录到 `specs/002-upgrade-direct-deps/contracts/acceptance-gates.md`。**未获得用户确认前不得开始 T013**
 
 ### GREEN — 逐项升级并通过门禁
 
 > 三项升级均改写同一文件 `build.zig.zon`，因此不可并行，须按 T013 → T015 → T017 顺序执行。
 
-- [ ] T013 [US2] 用 `zig fetch <v1.93.0 URL>` 取得哈希，将 `imgui` 的 `.url` 与 `.hash` 更新到 v1.93.0 于 `build.zig.zon`，保持 `lazy = true`（依据 data-model.md `直接依赖.来源类型`、`直接依赖.当前内容哈希`；契约见 `specs/002-upgrade-direct-deps/contracts/dependency-manifest.md`）
-- [ ] T014 [US2] 在 imgui 升级后执行 G1、G2、G4、G5，将 `验收门禁.结果` 记录到 `specs/002-upgrade-direct-deps/contracts/acceptance-gates.md`；任一失败时按 FR-011 先做为采用 v1.93.0 所必需的最小源码适配并复测，仍不满足时才回退 imgui 至 v1.92.5 并重跑（依据 data-model.md `验收门禁.命令`、`验收门禁.结果`）
-- [ ] T015 [US2] 用 `zig fetch <v5.7.0 URL>` 取得哈希，将 `jolt` 的 `.url` 与 `.hash` 更新到 v5.7.0 于 `build.zig.zon`，保持 `lazy = true`（依据 data-model.md `直接依赖.来源类型`、`直接依赖.当前内容哈希`）
-- [ ] T016 [US2] 在 jolt 升级后执行 G1、G2、G3，将 `验收门禁.结果` 记录到 `specs/002-upgrade-direct-deps/contracts/acceptance-gates.md`；任一失败（尤其 C ABI 桥接或物理不变量）时按 FR-011 先做必要的最小源码适配并复测，仍不满足时才回退 jolt 至 v5.5.0 并重跑（依据 data-model.md `验收门禁.命令`、`验收门禁.结果`）
-- [ ] T017 [US2] 用 `zig fetch <commit 6b5799b URL>` 取得哈希，将 `stb` 的 `.url` 与 `.hash` 更新到 `6b5799b` 于 `build.zig.zon`，保持 `lazy = true`（依据 data-model.md `直接依赖.来源类型`、`直接依赖.当前内容哈希`）
-- [ ] T018 [US2] 在 stb 升级后执行 G1、G2，将 `验收门禁.结果` 记录到 `specs/002-upgrade-direct-deps/contracts/acceptance-gates.md`；失败时按 FR-011 先做必要的最小源码适配并复测，仍不满足时才回退 stb 至 `f056911` 并重跑（依据 data-model.md `验收门禁.命令`、`验收门禁.结果`）
-- [ ] T019 [US2] 重新运行 `specs/002-upgrade-direct-deps/contracts/check-target-versions.sh`，确认全部检查通过（GREEN）；并检查 `build.zig.zon`：6 个键不变、所有 `.url` 为不可变 tag/提交、所有 `.hash` 非空、`lazy` 标记与 `minimum_zig_version = "0.17.1"` 未变（依据 data-model.md `直接依赖.来源类型`、`直接依赖.当前内容哈希`）
+- [X] T013 [US2] 用 `zig fetch <v1.93.0 URL>` 取得哈希，将 `imgui` 的 `.url` 与 `.hash` 更新到 v1.93.0 于 `build.zig.zon`，保持 `lazy = true`（依据 data-model.md `直接依赖.来源类型`、`直接依赖.当前内容哈希`；契约见 `specs/002-upgrade-direct-deps/contracts/dependency-manifest.md`）
+- [X] T014 [US2] 在 imgui 升级后执行 G1、G2、G4、G5，将 `验收门禁.结果` 记录到 `specs/002-upgrade-direct-deps/contracts/acceptance-gates.md`；任一失败时按 FR-011 先做为采用 v1.93.0 所必需的最小源码适配并复测，仍不满足时才回退 imgui 至 v1.92.5 并重跑（依据 data-model.md `验收门禁.命令`、`验收门禁.结果`）
+- [X] T015 [US2] 用 `zig fetch <v5.7.0 URL>` 取得哈希，将 `jolt` 的 `.url` 与 `.hash` 更新到 v5.7.0 于 `build.zig.zon`，保持 `lazy = true`（依据 data-model.md `直接依赖.来源类型`、`直接依赖.当前内容哈希`）
+- [X] T016 [US2] 在 jolt 升级后执行 G1、G2、G3，将 `验收门禁.结果` 记录到 `specs/002-upgrade-direct-deps/contracts/acceptance-gates.md`；任一失败（尤其 C ABI 桥接或物理不变量）时按 FR-011 先做必要的最小源码适配并复测，仍不满足时才回退 jolt 至 v5.5.0 并重跑（依据 data-model.md `验收门禁.命令`、`验收门禁.结果`）
+- [X] T017 [US2] 用 `zig fetch <commit 6b5799b URL>` 取得哈希，将 `stb` 的 `.url` 与 `.hash` 更新到 `6b5799b` 于 `build.zig.zon`，保持 `lazy = true`（依据 data-model.md `直接依赖.来源类型`、`直接依赖.当前内容哈希`）
+- [X] T018 [US2] 在 stb 升级后执行 G1、G2，将 `验收门禁.结果` 记录到 `specs/002-upgrade-direct-deps/contracts/acceptance-gates.md`；失败时按 FR-011 先做必要的最小源码适配并复测，仍不满足时才回退 stb 至 `f056911` 并重跑（依据 data-model.md `验收门禁.命令`、`验收门禁.结果`）
+- [X] T019 [US2] 重新运行 `specs/002-upgrade-direct-deps/contracts/check-target-versions.sh`，确认全部检查通过（GREEN）；并检查 `build.zig.zon`：6 个键不变、所有 `.url` 为不可变 tag/提交、所有 `.hash` 非空、`lazy` 标记与 `minimum_zig_version = "0.17.1"` 未变（依据 data-model.md `直接依赖.来源类型`、`直接依赖.当前内容哈希`）
 
 **Checkpoint**: At this point, User Stories 1 AND 2 should both work independently
 
@@ -103,11 +103,11 @@ description: "Tasks for upgrading direct dependencies to latest compatible versi
 
 ### Implementation for User Story 3
 
-- [ ] T020 [US3] 在最终依赖状态下执行完整 G1–G5，将 `验收门禁.结果` 汇总写入 `specs/002-upgrade-direct-deps/contracts/acceptance-gates.md`（依据 data-model.md `验收门禁.命令`、`验收门禁.结果`）
-- [ ] T021 [US3] 清理本地依赖缓存后断网执行 G6 离线干净构建，将 `验收门禁.结果` 写入 `specs/002-upgrade-direct-deps/contracts/acceptance-gates.md`；失败则定位依赖并回退后重跑（依据 data-model.md `验收门禁.结果`）
-- [ ] T022 [US3] 填充 `README.md`「技术栈与依赖」升级记录表：6 项依赖逐条写入 `升级记录.依赖名称`、`升级记录.原版本`、`升级记录.新版本`、`升级记录.理由`（依据 data-model.md 对应字段）
-- [ ] T023 [US3] 核对 `README.md` 与 `build.zig`：glTF 支持边界、物理步长 1/60s / 每帧 6 步 / 相机 1.6m / 最近碰撞射线、缓存命中 `embedded:demo.glb`、SPIR-V 与 HLSL 同步均未改变（FR-010）
-- [ ] T024 [P] [US3] 按 `specs/002-upgrade-direct-deps/quickstart.md` 复核步骤与最终状态一致，更新其中与实测不符的命令或预期
+- [X] T020 [US3] 在最终依赖状态下执行完整 G1–G5，将 `验收门禁.结果` 汇总写入 `specs/002-upgrade-direct-deps/contracts/acceptance-gates.md`（依据 data-model.md `验收门禁.命令`、`验收门禁.结果`）
+- [X] T021 [US3] 清理本地依赖缓存后断网执行 G6 离线干净构建，将 `验收门禁.结果` 写入 `specs/002-upgrade-direct-deps/contracts/acceptance-gates.md`；失败则定位依赖并回退后重跑（依据 data-model.md `验收门禁.结果`）
+- [X] T022 [US3] 填充 `README.md`「技术栈与依赖」升级记录表：6 项依赖逐条写入 `升级记录.依赖名称`、`升级记录.原版本`、`升级记录.新版本`、`升级记录.理由`（依据 data-model.md 对应字段）
+- [X] T023 [US3] 核对 `README.md` 与 `build.zig`：glTF 支持边界、物理步长 1/60s / 每帧 6 步 / 相机 1.6m / 最近碰撞射线、缓存命中 `embedded:demo.glb`、SPIR-V 与 HLSL 同步均未改变（FR-010）
+- [X] T024 [P] [US3] 按 `specs/002-upgrade-direct-deps/quickstart.md` 复核步骤与最终状态一致，更新其中与实测不符的命令或预期
 
 **Checkpoint**: All user stories should now be independently functional
 
@@ -117,10 +117,10 @@ description: "Tasks for upgrading direct dependencies to latest compatible versi
 
 **Purpose**: 最终一致性检查、提交与端到端验收
 
-- [ ] T025 [P] 检查 `README.md`「常见问题」是否需补充升级后的构建/依赖说明
-- [ ] T026 审阅完整 diff：确认仅 `build.zig.zon`、`specs/002-upgrade-direct-deps/contracts/check-target-versions.sh` 与设计/验收文档被修改，`src/`、`shaders/`、`assets/` 无改动
-- [ ] T027 按宪章以原子提交落地，使用 `feat:` / `docs:` 前缀与中文描述，提交前删除 `.specify/memory/constitution.md` 中遗留的临时 Sync Impact Report 审阅材料（如适用）
-- [ ] T028 按 `specs/002-upgrade-direct-deps/quickstart.md` 执行一次端到端验证，确认 SC-001～SC-006 全部满足
+- [X] T025 [P] 检查 `README.md`「常见问题」是否需补充升级后的构建/依赖说明
+- [X] T026 审阅完整 diff：确认仅 `build.zig.zon`、`specs/002-upgrade-direct-deps/contracts/check-target-versions.sh` 与设计/验收文档被修改，`src/`、`shaders/`、`assets/` 无改动
+- [X] T027 按宪章以原子提交落地，使用 `feat:` / `docs:` 前缀与中文描述，提交前删除 `.specify/memory/constitution.md` 中遗留的临时 Sync Impact Report 审阅材料（如适用）
+- [X] T028 按 `specs/002-upgrade-direct-deps/quickstart.md` 执行一次端到端验证，确认 SC-001～SC-006 全部满足
 
 ---
 

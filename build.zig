@@ -117,8 +117,8 @@ fn configurePhysics(b: *std.Build, jolt: *std.Build.Dependency, target: std.Buil
     bindings: *std.Build.Module,
 } {
     // Use the upstream core source list, without the optional object stream.
-    b.dependOnFileContents(jolt.path("Jolt/Jolt.cmake"));
-    const cmake = jolt.builder.root.root_dir.handle.readFileAlloc(b.graph.io, "Jolt/Jolt.cmake", b.allocator, .limited(128 * 1024)) catch |err|
+    b.dependOnFileContents(jolt.path("JoltPhysics-5.7.0/Jolt/Jolt.cmake"));
+    const cmake = jolt.builder.root.root_dir.handle.readFileAlloc(b.graph.io, "JoltPhysics-5.7.0/Jolt/Jolt.cmake", b.allocator, .limited(128 * 1024)) catch |err|
         @panic(@errorName(err));
     const marker = "set(JOLT_PHYSICS_SRC_FILES\n";
     const start = (std.mem.indexOf(u8, cmake, marker) orelse @panic("Jolt source list missing")) + marker.len;
@@ -133,9 +133,9 @@ fn configurePhysics(b: *std.Build, jolt: *std.Build.Dependency, target: std.Buil
     }
     if (files.items.len == 0) @panic("Jolt C++ source list is empty");
     const module = b.createModule(.{ .target = target, .optimize = optimize, .link_libcpp = true });
-    module.addIncludePath(jolt.path(""));
+    module.addIncludePath(jolt.path("JoltPhysics-5.7.0"));
     const flags = &.{ "-std=c++17", "-fno-exceptions", "-fno-rtti", "-ffp-contract=off", "-fno-sanitize=undefined" };
-    module.addCSourceFiles(.{ .root = jolt.path("Jolt"), .files = files.items, .flags = flags });
+    module.addCSourceFiles(.{ .root = jolt.path("JoltPhysics-5.7.0/Jolt"), .files = files.items, .flags = flags });
     module.addCSourceFile(.{ .file = b.path("src/engine/physics/jolt_bridge.cpp"), .flags = flags });
     const headers = b.addTranslateC(.{
         .root_source_file = b.path("src/engine/physics/jolt_bridge.h"),
