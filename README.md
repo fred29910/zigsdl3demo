@@ -15,6 +15,7 @@
 - [技术栈与依赖](#技术栈与依赖)
 - [着色器开发](#着色器开发)
 - [编辑训练场](#编辑训练场)
+- [规格与问题记录](#规格与问题记录)
 - [测试与验收](#测试与验收)
 - [常见问题](#常见问题)
 
@@ -133,6 +134,7 @@ Render Queue → 阴影 → 不透明场景 → 天空盒 → HUD / 调试面板
 | [src/engine/gameplay](src/engine/gameplay) | 武器与生命组件、机器人状态机和路点寻路 |
 | [src/engine/renderer](src/engine/renderer) | SDL GPU 交换链、相机、Render Queue、光照阴影、天空盒和 ImGui |
 | [src/engine/audio](src/engine/audio) | miniaudio 桥接与训练场的短 PCM 开火、命中音效 |
+| [src/engine/profiler.zig](src/engine/profiler.zig) | Tracy 本地帧标记与分区计时，由 `-Dtracy-source` 启用 |
 | [assets](assets)、[shaders](shaders) | Blender 场地导出脚本、内嵌 GLB、HLSL 与默认嵌入的 SPIR-V |
 | [src/physics_test.zig](src/physics_test.zig) | Jolt 碰撞、角色移动和武器事件的无窗口测试 |
 
@@ -151,10 +153,10 @@ Jolt 提供 Box、Sphere、Capsule 和静态三角网格，使用静态、动态
 | 依赖 | 固定版本 | 用途 |
 | --- | --- | --- |
 | [sdl3-zig](https://github.com/fred29910/sdl3-zig/tree/aaa5868464855ab0bda4dffe1cf424709f665669) | `aaa5868`，绑定 SDL 3.4.20 | 窗口、输入、SDL GPU |
-| [Dear ImGui](https://github.com/ocornut/imgui/tree/v1.92.5) | v1.92.5 | HUD、调试面板及 SDL3 / SDL GPU 后端 |
-| [Jolt Physics](https://github.com/jrouwe/JoltPhysics/releases/tag/v5.5.0) | v5.5.0 | 刚体、射线和 CharacterVirtual |
+| [Dear ImGui](https://github.com/ocornut/imgui/tree/v1.93.0) | v1.93.0 | HUD、调试面板及 SDL3 / SDL GPU 后端 |
+| [Jolt Physics](https://github.com/jrouwe/JoltPhysics/releases/tag/v5.7.0) | v5.7.0 | 刚体、射线和 CharacterVirtual |
 | [cgltf](https://github.com/jkuhlmann/cgltf/releases/tag/v1.15) | v1.15 | glTF / GLB 解析 |
-| [stb_image](https://github.com/nothings/stb/tree/f0569113c93ad095470c54bf34a17b36646bbbb5) | v2.30，提交 `f056911` | PNG 和 JPEG 解码 |
+| [stb_image](https://github.com/nothings/stb/tree/6b5799bae8a1fe3792691ef4b72ae26434c3e799) | v2.30，提交 `6b5799b` | PNG 和 JPEG 解码 |
 | [miniaudio](https://github.com/mackron/miniaudio/releases/tag/0.11.26) | 0.11.26 | 短 PCM 音效混音与播放 |
 | [Tracy](https://github.com/wolfpld/tracy/tree/v0.12.2) | v0.12.2，可选 | 本地 CPU 帧标记与分区计时 |
 
@@ -200,6 +202,22 @@ blender -b -noaudio --python-exit-code 1 --python assets/export_range.py
 zig build run
 ```
 
+## 规格与问题记录
+
+近期功能采用 GitHub Spec Kit 管理，规格文档位于 `specs/`，问题评估与修复记录位于 `.specify/bugs/`。规格文档的 `Status` 字段目前仍为 `Draft`，实际实现与验证结论以代码和下方对应章节为准。
+
+| 编号 | 主题 | 对应内容 |
+| --- | --- | --- |
+| 001-game-lobby-ui | 中文游戏大厅与四模式入口、会话设置 | [游戏大厅](#游戏大厅)、[手动验收](#手动验收) 第 9 项、`specs/001-game-lobby-ui/ui-design.md` D-01–D-18 |
+| 002-upgrade-direct-deps | 直接依赖升级与 Jolt v5.7.0 适配 | [技术栈与依赖](#技术栈与依赖) 的升级记录表 |
+| 003-compile-time-log-level | 编译期按发布模式过滤 debug 日志 | [日志级别](#日志级别) |
+| 004-training-mode-controls | 训练场视角与 WASD 操控完善 | [操作与训练场](#操作与训练场)、下方操控自动验证说明 |
+
+已记录的问题均未宣称实机通过，复现与验证步骤以 `specs/001-game-lobby-ui/quickstart.md` V7 为准：
+
+- `.specify/bugs/lobby-mode-switch-crash/` — 真实 Wayland 下从 demo_2d 返回大厅时交换链 surface 丢失；已尝试的两种修复均被复现证伪，记录状态为 `partial`，失败回归保留。
+- `.specify/bugs/gpu-surface-reclaim-needed/` — 进入 2D 前释放 GPU 窗口绑定、返回时重建 surface 与交换链；构建与单测门禁通过，但原始键鼠路径的 5 轮切换复核未完成，状态为 `partial`。环境级规避候选 `SDL_VIDEO_DRIVER=x11`（走 XWayland）同样待真实桌面确认。
+
 ## 测试与验收
 
 ```sh
@@ -215,7 +233,7 @@ zig build test -Dclear-only=true --release
 
 `zig build test` 覆盖基础设施、SDL 输入、场景句柄、父子变换、Render Queue、glTF 导入和物理。`zig build physics-test` 可独立验证碰撞、角色贴地和跳跃、射线与武器、路点绕障、机器人追击与遮挡中断攻击，无需窗口或 GPU。训练场操控的自动验证还覆盖视角捕获门控、俯仰限幅与灵敏度比例，以及四方向/斜向限速、冲刺提速与松开恢复、单次起跳与十次连续起跳、取消输入及回合重开保留灵敏度；这些命令全部通过后才能判定操控实现未回归。
 
-本次（2026-11-26）完整验证记录：`zig version` 为 0.17.1；`zig build install test`、`zig build physics-test`、`zig build install test -Doptimize=ReleaseSafe`、`zig build test -Ddemo-2d=true`、`zig build test -Dclear-only=true` 退出码均为 0。
+本次（2026-11-26，当前工作区）复核记录：`zig version` 为 0.17.1；`zig build install test`、`zig build physics-test`、`zig build install test -Doptimize=ReleaseSafe`、`zig build test -Ddemo-2d=true`、`zig build test -Dclear-only=true` 退出码均为 0。
 
 ### 手动验收
 
@@ -280,3 +298,4 @@ timeout --preserve-status --kill-after=2s 3s env \
 | 纹理缺失或出现 `UnsupportedTextureCoordinates` | 将材质纹理导出到 UV0，去掉纹理坐标变换，并导出为 PNG/JPEG |
 | 默认训练场无声 | 查看启动日志中的 `audio` 行，检查系统默认播放设备及静音状态。音频初始化失败时，Demo 会记录警告并继续运行 |
 | 修改 HLSL 后画面仍旧 | 安装启用了 DXC 的 shadercross，按着色器开发章节生成并更新对应 SPIR-V |
+| 真实 Wayland 下从 2D 演示返回大厅后崩溃 | 这是已记录的 surface 丢失问题，见「规格与问题记录」；可先用 `-Ddemo-2d=true` 独立构建运行 2D 演示，或尝试 `SDL_VIDEO_DRIVER=x11` 走 XWayland。修复的 5 轮实机复核尚未完成 |
